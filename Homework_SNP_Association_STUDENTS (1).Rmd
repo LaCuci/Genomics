@@ -65,20 +65,21 @@ Verify dimensions, unique identifiers, phenotype coding, genotype values and cor
 # 1. Upload and Preprocess the data
 
 
-```{r message = FALSE, results='hold'}
+```{r message = FALSE, results='hold', warning=FALSE}
+
+################################### PART 1 ##############################
 
 cat("\014")
 rm(list = ls())
-#graphics.off()
 # Corrisponds to clc, close all and clear all in matlab
 
-#INSERT SETWD 
+##setwd("C:/Users/vitto/Desktop/Homework1")
 
 # Load the study dataset
 study_data <- read.delim("study.tsv", header = TRUE, stringsAsFactors = FALSE)
 
 # First of all: visualization of the imported data
-#I have to comment this out --->>>View(study_data, title = "Full Study Data")
+#View(study_data, title = "Full Study Data")
 
 # Dataset dimensions
 cat("Dataset dimensions (rows, columns):", dim(study_data), "\n")
@@ -91,13 +92,13 @@ cat("Unique sample IDs:", length(unique(study_data$sample_id)), "\n")
 
 # Phenotype distribution 
 # The second column says if the individual is a case or a control, in particular the 
-# variable associated is 0 = control (the sample doesn't have the disease), 1 = case (has the disease)
+# variables associated are 0 = control (the sample doesn't have the disease), 1 = case (has the disease)
 cat("\nPhenotype counts:\n")
 print(table(study_data$case_control, useNA = "ifany"))
 
-# At this moment our data contains both the 'name' of the individuals and their case/control associations. For the analysis we want to do is better to remove the first 2 columns, the genotypes table contains only interesting data.
+# At this moment our data contains both the 'name' of the individuals and their case/control associations. For the analysis we want to do is better to create a new database: the genotypes table contains only individuals positions and SNPs.
 genotypes <- study_data[, -(1:2)]
-#I have to comment this out ----->>>View(genotypes, title = "After fist 2 column remuval - Genotypes Only")
+#View(genotypes, title = "After fist 2 column remuval - Genotypes Only")
 
 # The following row will show genotypes dataset dimentions
 cat("Dataset dimensions (rows, columns):", dim(genotypes), "\n")
@@ -112,53 +113,6 @@ total_cells <- prod(dim(genotypes))
 missing_cells <- sum(is.na(genotypes))
 cat("Total missing genotype calls:", missing_cells, "\n")
 cat("Percentage of missing data across all genotypes:", round((missing_cells / total_cells) * 100, 2), "%\n")
-
-# Now we can visualize the distribution of NAs on both rows and column in order to have some more hint on which value could be a good threshold for the following QC.
-
-# Calculated percentage of missingness (NAs) for each individual and SNP
-row_na_pct <- rowMeans(is.na(genotypes)) * 100
-col_na_pct <- colMeans(is.na(genotypes)) * 100
-
-# Set up the plotting layout to show one figure with two graphs (1 row, 2 columns)
-par(mfrow = c(1, 2))
-
-# Histogram for Individuals (Row Missingness)
-hist(row_na_pct, 
-     breaks = 30, 
-     col = "skyblue", 
-     border = "white",
-     main = "Missingness per Individual", 
-     xlab = "Missing Data (%)", 
-     ylab = "Number of Individuals")
-
-# If useful visual threshold line at 5% 
-# abline(v = 5, col = "red", lwd = 2, lty = 2)
-
-# Histogram for Variants (Column Missingness)
-hist(col_na_pct, 
-     breaks = 30, 
-     col = "salmon", 
-     border = "white",
-     main = "Missingness per Variant (SNP)", 
-     xlab = "Missing Data (%)", 
-     ylab = "Number of Variants")
-
-# Add a visual threshold line at 2%
-abline(v = 2, col = "red", lwd = 2, lty = 2)
-
-# Reset plotting layout back to default (1x1)
-par(mfrow = c(1, 1))
-
-# Print summary statistics to help justify your chosen threshold
-cat("\n--- Summary of Individual Missingness (%) ---\n")
-print(summary(row_na_pct))
-
-cat("\n--- Summary of Variant Missingness (%) ---\n")
-print(summary(col_na_pct))
-
-# The outputs of this part denote that:
-# 1) Every single individuals has circa 1% of missing values. The minimum and the maximum percentage of NAs in rows are extremely near, so we choose to not set a threshold. We consider as all the samples have passed the basic quality control.
-# 2) On the other hand the missingness per SNP range is larger (minimum 0% and maximum 3.44%). We should define a threshold to decide when a specific SNP has too much non identified values to be considered in the analysis. Our decision is to set it at 2%, as discussed in class.
 ```
 
 # 2. Quality Control 
@@ -169,7 +123,7 @@ Choose and justify your thresholds; distinguish a diagnostic flag from an automa
 Provide a filtering log showing the order of operations and the numbers of individuals and variants retained after each step. Avoid counting the same exclusion twice. If a check removes nothing, report that result; exclusions are not a goal in themselves.
 
 
-```{r message = FALSE, results='hold'}
+```{r message = FALSE, results='hold', warning=FALSE}
 # Now we can visualize the distribution of NAs on both rows and column in order to have some more hint on which value could be a good threshold for the following QC.
 
 # Calculated percentage of missingness (NAs) for each individual and SNP
@@ -215,7 +169,7 @@ print(summary(col_na_pct))
 
 # The outputs of this part denote that:
 # 1) Every single individuals has circa 1% of missing values. The minimum and the maximum percentage of NAs in rows are extremely near, so we choose to not set a threshold. We consider as all the samples have passed the basic quality control.
-# 2) On the other hand the variant missingness range is larger (minimum 0% and maximum 3.44%). We should define a threshold. Our decision is to set it at 2% in order to cut off those few variants sitting above 2%.
+# 2) On the other hand the missingness per SNP range is larger (minimum 0% and maximum 3.44%). We should define a threshold to decide when a specific SNP has too much non identified values to be considered in the analysis. Our decision is to set it at 2%, as discussed in class.
 
 
 max_snp_miss <- 0.02  # Maximum allowed missingness per SNP (2%)
@@ -295,7 +249,7 @@ Apply your prespecified primary method to every variant retained after QC, docum
 
 **Worked example.** For one tested SNP, show the case/control counts for each observed genotype and explain how these data enter your chosen test or model. State the null hypothesis and interpret its p-value. If you use a regression model, also interpret the estimated effect with its uncertainty. This example complements the analysis of all retained SNPs.
 
-```{r message = FALSE, results='hold'}
+```{r message = FALSE, results='hold', warning=FALSE}
 ################################ PART 3 ################################
 # ASSOCIATION TEST
 
