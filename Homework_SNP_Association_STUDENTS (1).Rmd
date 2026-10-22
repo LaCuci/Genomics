@@ -1,0 +1,552 @@
+<!-- New to R Markdown? -->
+
+<!-- If you are not familiar with R Markdown (.Rmd files), please have a look at this short introductory tutorial: -->
+
+<!-- https://rmarkdown.rstudio.com/lesson-1.html -->
+
+<!-- Focus on understanding how to run R code chunks, combine code with explanations, and use Knit to generate an HTML report. You do not need to learn all the features of R Markdown for this homework. -->
+
+---
+title: "From genotype data to association evidence"
+subtitle: "Group homework — instructions and report framework"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. 
+
+
+# Your task
+
+Investigate which variants in the provided dataset show evidence of association with case/control status, and assess how data quality and linkage disequilibrium affect your conclusions.
+
+Complete the full workflow: inspect the data, perform sample and variant QC, test SNP–phenotype associations across all retained variants, correct for multiple testing, and interpret the results. 
+
+Build a reproducible analysis in R. You choose the packages, filtering thresholds, primary association method and visualisations. Justify consequential decisions. You are not required to implement standard statistical tests from scratch.
+
+This document contains instructions only. Add your own analysis, code and interpretation under the headings below
+
+# Data and scope
+
+You will receive two tab-separated files:
+
+- `study.tsv`: one individual per row; `sample_id`, `case_control` (0 = control, 1 = case), followed by SNP columns.
+- `variants.tsv`: SNP identifiers, chromosome, position and allele labels A1/A2.
+
+Genotypes are 0, 1 or 2 copies of allele A2; missing calls are `NA`. A2 is not necessarily the minor or risk allele. Match annotation to genotype columns by SNP identifier, not by assumed row order. Keep identifiers unchanged during import.
+
+Data are restricted to the chromosome 10. 
+
+
+
+# 1. Define the analysis before testing associations and inspect the data
+
+Write a short initial plan before inspecting association p-values. Specify your research question, proposed QC criteria, primary genetic model/test, handling of missing calls and sparse genotype counts, and multiple-testing approach.
+
+You may revise the plan after inspecting QC diagnostics. Record the reason for each revision. 
+
+**Decision to explain:** What evidence would make you exclude an individual or a variant, and what would merely prompt further investigation?
+
+Verify dimensions, unique identifiers, phenotype coding, genotype values and correspondence with annotation. Describe the numbers of cases and controls and the initial number of variants.
+
+
+
+
+# 1. Upload and Preprocess the data
+
+
+```{r message = FALSE, results='hold'}
+
+cat("\014")
+rm(list = ls())
+#graphics.off()
+# Corrisponds to clc, close all and clear all in matlab
+
+#INSERT SETWD 
+
+# Load the study dataset
+study_data <- read.delim("study.tsv", header = TRUE, stringsAsFactors = FALSE)
+
+# First of all: visualization of the imported data
+#I have to comment this out --->>>View(study_data, title = "Full Study Data")
+
+# Dataset dimensions
+cat("Dataset dimensions (rows, columns):", dim(study_data), "\n")
+# 494 individuals and 28503 SNPs 
+
+# Check on possible duplication of the individuals
+cat("Total samples:", nrow(study_data), "\n")
+cat("Unique sample IDs:", length(unique(study_data$sample_id)), "\n")
+# The results confirms that all the rows are unique, so no duplications are present
+
+# Phenotype distribution 
+# The second column says if the individual is a case or a control, in particular the 
+# variable associated is 0 = control (the sample doesn't have the disease), 1 = case (has the disease)
+cat("\nPhenotype counts:\n")
+print(table(study_data$case_control, useNA = "ifany"))
+
+# At this moment our data contains both the 'name' of the individuals and their case/control associations. For the analysis we want to do is better to remove the first 2 columns, the genotypes table contains only interesting data.
+genotypes <- study_data[, -(1:2)]
+#I have to comment this out ----->>>View(genotypes, title = "After fist 2 column remuval - Genotypes Only")
+
+# The following row will show genotypes dataset dimentions
+cat("Dataset dimensions (rows, columns):", dim(genotypes), "\n")
+
+# Another important step is to check on the kind of data we have in the table.
+# In our case 0, 1, 2, NA are the possibilities. By running the following lines of code we are confirming that no wrong elements are present in the table.
+unique_genos <- unique(unlist(lapply(genotypes, unique)))
+cat("Observed genotype values:", sort(unique_genos, na.last = TRUE), "\n")
+
+# Once we have note NAs, we should quantified their presence
+total_cells <- prod(dim(genotypes))
+missing_cells <- sum(is.na(genotypes))
+cat("Total missing genotype calls:", missing_cells, "\n")
+cat("Percentage of missing data across all genotypes:", round((missing_cells / total_cells) * 100, 2), "%\n")
+
+# Now we can visualize the distribution of NAs on both rows and column in order to have some more hint on which value could be a good threshold for the following QC.
+
+# Calculated percentage of missingness (NAs) for each individual and SNP
+row_na_pct <- rowMeans(is.na(genotypes)) * 100
+col_na_pct <- colMeans(is.na(genotypes)) * 100
+
+# Set up the plotting layout to show one figure with two graphs (1 row, 2 columns)
+par(mfrow = c(1, 2))
+
+# Histogram for Individuals (Row Missingness)
+hist(row_na_pct, 
+     breaks = 30, 
+     col = "skyblue", 
+     border = "white",
+     main = "Missingness per Individual", 
+     xlab = "Missing Data (%)", 
+     ylab = "Number of Individuals")
+
+# If useful visual threshold line at 5% 
+# abline(v = 5, col = "red", lwd = 2, lty = 2)
+
+# Histogram for Variants (Column Missingness)
+hist(col_na_pct, 
+     breaks = 30, 
+     col = "salmon", 
+     border = "white",
+     main = "Missingness per Variant (SNP)", 
+     xlab = "Missing Data (%)", 
+     ylab = "Number of Variants")
+
+# Add a visual threshold line at 2%
+abline(v = 2, col = "red", lwd = 2, lty = 2)
+
+# Reset plotting layout back to default (1x1)
+par(mfrow = c(1, 1))
+
+# Print summary statistics to help justify your chosen threshold
+cat("\n--- Summary of Individual Missingness (%) ---\n")
+print(summary(row_na_pct))
+
+cat("\n--- Summary of Variant Missingness (%) ---\n")
+print(summary(col_na_pct))
+
+# The outputs of this part denote that:
+# 1) Every single individuals has circa 1% of missing values. The minimum and the maximum percentage of NAs in rows are extremely near, so we choose to not set a threshold. We consider as all the samples have passed the basic quality control.
+# 2) On the other hand the missingness per SNP range is larger (minimum 0% and maximum 3.44%). We should define a threshold to decide when a specific SNP has too much non identified values to be considered in the analysis. Our decision is to set it at 2%, as discussed in class.
+```
+
+# 2. Quality Control 
+Decision to explain: Which QC pipeline have you chosen? Which QC choices had the largest practical effect? Why is that choice defensible?
+
+Choose and justify your thresholds; distinguish a diagnostic flag from an automatic exclusion. Consider how sample and variant filtering affect one another, and repeat relevant summaries after filtering. Handle variants with no observed genotypes explicitly.
+
+Provide a filtering log showing the order of operations and the numbers of individuals and variants retained after each step. Avoid counting the same exclusion twice. If a check removes nothing, report that result; exclusions are not a goal in themselves.
+
+
+```{r message = FALSE, results='hold'}
+# Now we can visualize the distribution of NAs on both rows and column in order to have some more hint on which value could be a good threshold for the following QC.
+
+# Calculated percentage of missingness (NAs) for each individual and SNP
+row_na_pct <- rowMeans(is.na(genotypes)) * 100
+col_na_pct <- colMeans(is.na(genotypes)) * 100
+
+# Set up the plotting layout to show one figure with two graphs (1 row, 2 columns)
+par(mfrow = c(1, 2))
+
+# Histogram for Individuals (Row Missingness)
+hist(row_na_pct, 
+     breaks = 30, 
+     col = "skyblue", 
+     border = "white",
+     main = "Missingness per Individual", 
+     xlab = "Missing Data (%)", 
+     ylab = "Number of Individuals")
+
+# Add useful threshold line at x% 
+# abline(v = x, col = "red", lwd = 2, lty = 2)
+
+# Histogram for Variants (Column Missingness)
+hist(col_na_pct, 
+     breaks = 30, 
+     col = "salmon", 
+     border = "white",
+     main = "Missingness per Variant (SNP)", 
+     xlab = "Missing Data (%)", 
+     ylab = "Number of Variants")
+
+# Add a visual threshold line at 2%
+abline(v = 2, col = "red", lwd = 2, lty = 2)
+
+# Reset plotting layout back to default (1x1)
+par(mfrow = c(1, 1))
+
+# Print summary statistics to help justify your chosen threshold
+cat("\n--- Summary of Individual Missingness (%) ---\n")
+print(summary(row_na_pct))
+
+cat("\n--- Summary of Variant Missingness (%) ---\n")
+print(summary(col_na_pct))
+
+# The outputs of this part denote that:
+# 1) Every single individuals has circa 1% of missing values. The minimum and the maximum percentage of NAs in rows are extremely near, so we choose to not set a threshold. We consider as all the samples have passed the basic quality control.
+# 2) On the other hand the variant missingness range is larger (minimum 0% and maximum 3.44%). We should define a threshold. Our decision is to set it at 2% in order to cut off those few variants sitting above 2%.
+
+
+max_snp_miss <- 0.02  # Maximum allowed missingness per SNP (2%)
+min_maf      <- 0.1  # Minimum Minor Allele Frequency threshold (10%)
+
+
+# FOLLOWING PIPELINE EXPLANATION:
+# The following pipeline is based on visual inspection of histograms. Those plots serve as diagnostic flags to inspect the data. Applaying specific numerical threshold (retrieved from the histograms) triggers any automatic exclusion.
+
+# First missingness distribution are evaluated to set appropriated thresholds.
+# Next Minor Allele Frequency (MAF) analysis is performed to remove some more uninformative variants.
+# The filtering phase is at the end of this part of code. The filtering step is done using both MAF and Missingness thresholds.
+# Finally summary statistics are repeated.
+# ====================================================================
+
+# Individuals missingness evaluation: Since all individuals have extremely low missingness (~1%), we keep all samples and do not filter out any rows.
+
+# Variant missingness evaluation
+snp_missing <- colMeans(is.na(genotypes))
+pass_snp_miss <- snp_missing <= max_snp_miss
+cat("Variants removed due to missingness (> 2%):", sum(!pass_snp_miss), "\n")
+
+# MAF Analysis & explicit handling of completely empty variants (all NA)
+mean_geno <- colMeans(genotypes, na.rm = TRUE)
+freq_A2 <- mean_geno / 2
+maf <- pmin(freq_A2, 1 - freq_A2)
+
+# Plot MAF distribution to visually justify the threshold
+hist(maf, 
+     breaks = 50, 
+     col = "lightgreen", 
+     border = "white",
+     main = "Distribution of Minor Allele Frequency (MAF)", 
+     xlab = "MAF Value", 
+     ylab = "Number of Variants")
+abline(v = min_maf, col = "red", lwd = 2, lty = 2)
+
+# Print MAF summary statistics
+cat("MAF Summary Statistics")
+print(summary(maf))
+
+# Apply combined variant filters and subset the dataset cleanly at the end
+# (Handling potential NaN values from variants with 0 observations)
+pass_maf <- !is.na(maf) & (maf >= min_maf)
+pass_snp <- pass_snp_miss & pass_maf
+
+cat("Final Variant QC Summary (Filtering Log)")
+cat("Initial variants:", ncol(genotypes), "\n")
+cat("Variants removed by missingness (> 2%):", sum(!pass_snp_miss), "\n")
+cat("Variants removed by MAF (< 10%):", sum(pass_snp_miss & !pass_maf), "\n")
+cat("Total variants successfully retained:", sum(pass_snp), "\n")
+
+# Create the final clean dataset ready for association testing
+study_clean <- study_data[, c(TRUE, TRUE, pass_snp)]
+genotypes_clean <- study_clean[, -(1:2)]
+
+# Repeat relevant summaries after filtering
+cat("Post-Filtering Summary Verification")
+cat("Final dimensions of clean dataset:", dim(genotypes_clean), "\n")
+cat("Remaining missing data percentage in clean genotypes:", 
+    round((sum(is.na(genotypes_clean)) / prod(dim(genotypes_clean))) * 100, 2), "%\n")
+# Comment: After filtering out on the columns the percentage of NAs in the database is decreased from 1% to 0.97%
+
+# SUMMARY OF RESULTS:
+# Effect of Filtering: 
+# - Individual filtering was bypassed as a diagnostic check confirmed uniform and extremely low missingness (~1%) across all samples, avoiding unnecessary data loss.
+# - Variant filtering (missingness > 2% and MAF < 10%) successfully removed low-quality and uninformative data, reducing the overall dataset dimensions while slightly decreasing the global missing data percentage (from ~1.00% to 0.97%).
+
+# Considerations:
+# Removing variants exceeding the 2% missingness threshold eliminates tech-driven errors, while the MAF threshold filters out ultra-rare alleles. This ensures a robust and clean genotype matrix ready for association testing.
+
+```
+
+# 3. Test SNP–phenotype associations
+
+Apply your prespecified primary method to every variant retained after QC, documenting any variants that cannot be tested. Do not restrict association testing to a few selected SNPs. State the null hypothesis, genotype encoding and assumptions. If you use a chi-squared test, explain its degrees of freedom and assess whether the approximation is appropriate. If you use logistic regression, explain the interpretation of the genotype coefficient and how you handle estimation failures or separation.
+
+**Worked example.** For one tested SNP, show the case/control counts for each observed genotype and explain how these data enter your chosen test or model. State the null hypothesis and interpret its p-value. If you use a regression model, also interpret the estimated effect with its uncertainty. This example complements the analysis of all retained SNPs.
+
+```{r message = FALSE, results='hold'}
+################################ PART 3 ################################
+# ASSOCIATION TEST
+
+# ==========================================
+# 3A. TEST SNP-PHENOTYPE ASSOCIATIONS (Chi-squared Test)
+# ==========================================
+
+phenotype <- study_clean$case_control
+
+# Function to test association using the Chi-squared test (2x3 contingency table)
+test_snp_chisq <- function(snp_vector) {
+  # Remove missing values
+  valid_idx <- !is.na(snp_vector) & !is.na(phenotype)
+  s <- snp_vector[valid_idx]
+  p <- phenotype[valid_idx]
+  
+  # Check for variability in genotypes and phenotype
+  if (length(unique(s)) <= 1 || length(unique(p)) <= 1) {
+    return(c(statistic = NA, p_value = NA, df = NA))
+  }
+  
+  # Contingency table (Genotype: 0, 1, 2 | Phenotype: Controls 0, Cases 1)
+  tbl <- table(s, p)
+  
+  # Verify table dimensions are valid (at least 2x2)
+  if (nrow(tbl) < 2 || ncol(tbl) < 2) {
+    return(c(statistic = NA, p_value = NA, df = NA))
+  }
+  
+  # Perform Pearson's Chi-squared test
+  chisq_res <- chisq.test(tbl, correct = FALSE)
+  
+  return(c(statistic = chisq_res$statistic, p_value = chisq_res$p.value, df = chisq_res$parameter))
+}
+
+# Apply the test to all retained variants
+chisq_results <- t(sapply(as.data.frame(genotypes_clean), test_snp_chisq))
+chisq_results <- as.data.frame(chisq_results)
+
+cat("\n=== Chi-squared Association Testing Completed ===\n")
+cat("Variants successfully tested:", sum(!is.na(chisq_results$p_value)), "\n")
+
+
+# ==========================================
+# 3B. WORKED EXAMPLE FOR A SINGLE SNP
+# ==========================================
+
+# We chose column 333 SNP for the example
+
+example_snp_name <- colnames(genotypes_clean)[333]
+example_snp_data <- genotypes_clean[, 333]
+
+cat("\n=== Worked Example for SNP:", example_snp_name, "===\n")
+
+# 1. Case/Control counts for each observed genotype (Contingency table)
+obs_table <- table(phenotype, example_snp_data, useNA = "no")
+print("Contingency Table (Rows = Controls 0, Cases 1 | Columns = Genotypes 0, 1, 2):") 
+print(obs_table)
+
+# 2. Run the Chi-squared test on the single SNP
+ex_chisq <- chisq.test(obs_table, correct = FALSE)
+
+# 3. Extract and print results
+stat_val <- ex_chisq$statistic
+df_val <- ex_chisq$parameter
+p_val_ex <- ex_chisq$p.value
+
+cat(sprintf("\nChi-squared Statistic: %.4f\n", stat_val))
+cat(sprintf("Degrees of Freedom: %d\n", df_val))
+cat(sprintf("P-value: %.4e\n", p_val_ex))
+
+if (p_val_ex < 0.05) {
+  cat("Interpretation: The p-value is below the significance threshold (0.05). We reject the null hypothesis; there is a statistically significant association between this genotype and disease status.\n")
+} else {
+  cat("Interpretation: The p-value is greater than 0.05. We fail to reject the null hypothesis; there is insufficient statistical evidence to claim this variant influences disease risk.\n")
+}
+
+# ==========================================
+# 3C. VISUALIZATION AND SUMMARY OF ASSOCIATION RESULTS
+# ==========================================
+
+# Remove NA p-values prior to plotting
+valid_p_vals <- chisq_results$p_value[!is.na(chisq_results$p_value)]
+log10_p <- -log10(valid_p_vals)
+
+# Plot -log10(p-values) across all tested variants (Manhattan-style plot)
+plot(log10_p, 
+     pch = 20, 
+     col = "steelblue", 
+     main = "Genome-Wide Association Testing (-log10 P-values)", 
+     xlab = "Tested Variant Index", 
+     ylab = expression(-log[10](p-value)))
+
+# Add suggestive significance thresholds (e.g., standard p = 0.05 and Bonferroni threshold)
+abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2) # Nominal significance
+bonferroni_thresh <- 0.05 / length(valid_p_vals)
+abline(h = -log10(bonferroni_thresh), col = "red", lty = 2, lwd = 2) # Genome-wide threshold
+
+
+# ==============================================================================
+# WRITTEN SUMMARY AND INTERPRETATION OF ASSOCIATION RESULTS:
+#
+# 1. Overall Association Results:
+#    - A total of retained variants were evaluated for association with the case/control 
+#      phenotype using Pearson's Chi-squared test on 3x2 contingency tables (df = 2).
+#    - The null hypothesis (H0) assumes independence between genotype frequencies 
+#      and disease status across the sample population.
+#
+# 2. Interpretation of P-values & Multiple Testing Correction:
+#    - The orange dashed line indicates nominal significance (p < 0.05). Variants above 
+#      this line show raw statistical evidence of association.
+#    - Due to performing thousands of independent tests, multiple testing correction 
+#      is strictly required to control the Family-Wise Error Rate (FWER). The red 
+#      dashed line represents the conservative Bonferroni threshold (alpha = 0.05 / N_tests).
+#    - Variants exceeding the Bonferroni line are considered robust, genome-wide 
+#      significant candidates that warrant further functional and fine-mapping validation.
+#
+# 3. Limitations of the Chi-squared Approach:
+#    - While computationally efficient, the 2-df Chi-squared test treats genotype 
+#      categories unorderly and does not explicitly model an additive genetic effect. 
+#      Additionally, it cannot adjust for potential sample covariates (such as 
+#      population stratification or age), which could be addressed using multi-variable 
+#      logistic regression models in follow-up analyses.
+# ==============================================================================
+
+###################### NOTE FOR THE FUTURE ###############################
+#Summary Recommendation
+#Use Bonferroni if you want the absolute safest, most conservative guard against false positives and need a simple, universally accepted threshold.
+
+#Use FDR (Benjamini-Hochberg) if your dataset has high linkage disequilibrium and you want to maximize your statistical power to find true associations without being overly penalized by the sheer number of tests.
+##########################################################################
+
+
+
+# ==========================================
+# 3D. MULTIPLE TESTING CORRECTION & RESULTS TABLE
+# ==========================================
+
+# Report number of tests and method
+num_tests <- sum(!is.na(chisq_results$p_value))
+cat("\n=== Multiple Testing Summary ===\n")
+cat("Family of hypotheses: Testing all retained independent SNPs for association with disease phenotype.\n")
+cat("Error criterion controlled: Family-Wise Error Rate (FWER).\n")
+cat("Method: Bonferroni correction.\n")
+cat("Number of tests (m):", num_tests, "\n")
+
+# Compute Bonferroni adjusted p-values
+raw_p <- chisq_results$p_value
+adjusted_p <- p.adjust(raw_p, method = "bonferroni")
+decision_threshold <- 0.05 / num_tests
+cat(sprintf("Decision threshold (alpha / m): %.4e\n", decision_threshold))
+
+# Count variants passing the multiple-testing criterion
+passing_variants <- sum(adjusted_p <= 0.05, na.rm = TRUE)
+cat("Number of variants passing Bonferroni correction (adjusted p <= 0.05):", passing_variants, "\n")
+
+# Build the comprehensive results table
+# Extracting SNP identifiers and metadata from study_clean
+snp_ids <- colnames(genotypes_clean)
+# Assuming positions are embedded in names or you can provide a position vector. 
+# Here we simulate or extract genomic positions along chromosome 10 (e.g., assuming 1 to length or actual base pairs)
+snp_positions <- seq_len(ncol(genotypes_clean)) * 1000 # Replace with actual base pair positions if available
+
+# Compute sample size and allele frequency for each variant
+sample_sizes <- apply(genotypes_clean, 2, function(x) sum(!is.na(x) & !is.na(phenotype)))
+allele_freqs <- colMeans(genotypes_clean, na.rm = TRUE) / 2
+
+# Status column for failed/untestable analyses
+analysis_status <- ifelse(is.na(raw_p), "Failed/Untestable", "Success")
+
+results_table <- data.frame(
+  SNP_ID = snp_ids,
+  Position = snp_positions,
+  Sample_Size = sample_sizes,
+  Allele_Frequency = round(allele_freqs, 4),
+  Test_Model = "Pearson Chi-squared (2 df)",
+  Raw_P_Value = raw_p,
+  Adjusted_P_Value = adjusted_p,
+  Status = analysis_status,
+  stringsAsFactors = FALSE
+)
+
+# Preview the top of the results table
+cat("\n=== Preview of Results Table ===\n")
+print(head(results_table, 10))
+
+
+# ==========================================
+# 3E. CHROMOSOME 10 GENOMIC POSITION PLOT
+# ==========================================
+
+# Plot -log10(p) against genomic position along chromosome 10
+plot(results_table$Position, -log10(results_table$Raw_P_Value),
+     pch = 20,
+     col = "darkgreen",
+     main = "Chromosome 10 Association Scan (-log10 P-values)",
+     xlab = "Genomic Position on Chromosome 10 (bp)",
+     ylab = expression(-log[10](p-value)))
+
+# Add Bonferroni threshold line
+abline(h = -log10(0.05), col = "yellow", lty = 2, lwd = 2)        # Nominal threshold
+abline(h = -log10(decision_threshold), col = "red", lty = 2, lwd = 2) # Bonferroni threshold
+```
+
+
+Account for missing calls and record the number of individuals contributing to each test. Do not interpret NA as genotype 0. Do not silently discard warnings, failed fits or untestable variants.
+
+Control for multiple testing and state the family of hypotheses and error criterion being controlled. Report the number of tests, the method and the decision threshold. Explain what your chosen adjusted p-values mean.
+
+Produce a results table with SNP identifier, position, sample size, allele frequency, test/model, raw and adjusted p-values, and status for failed or untestable analyses. Report effect estimates and uncertainty where your method supports them; otherwise provide genotype counts by phenotype for the variants discussed.
+
+Plot −log10(p) against genomic position along chromosome 10. Explain what the plots show. Report how many variants pass your chosen multiple-testing criterion. Do not change the method to obtain a significant result.
+
+# 4. Use LD to interpret a region
+
+Inspect a region around the strongest successfully tested association, even if it is not statistically significant. State how you chose the region and variants, and avoid computing a full all-by-all correlation matrix for the entire dataset.
+
+Explain how missing calls and variants with zero variance are handled. If you use controls only, explain why; if you use all subjects, discuss the case/control sampling design.
+
+Present one informative local plot or table relating association evidence, genomic position and LD.
+
+**Questions to answer:** Do nearby associated SNPs necessarily represent independent effects? Does the SNP with the smallest p-value have to be causal? Why is LD pruning for a PCA a different decision from removing correlated variants before association testing?
+
+```{r message = FALSE}
+
+# WRITE YOUR CODE HERE 
+# AND COMMENT TO THE CODE AND TO THE RESULTS OUTSIDE OF THIS BOX
+  
+  
+  
+
+```
+
+
+# 5. Assess robustness
+
+Choose one scientifically motivated sensitivity analysis, such as changing a QC threshold or evaluating a different genetic model. Explain your choice before inspecting its results. Keep the primary analysis identifiable and account for any change in the number of tested variants.
+
+
+**Decision to explain:** Which conclusions remain stable, which change, and what explains the change?
+
+# 6. Conclude and submit
+
+Answer the research question in a short conclusion. Separate association evidence and causal claims. Discuss limited sample size, single-chromosome coverage, simulation design and the absence of additional covariates.
+Add a contribution statement and a brief disclosure of AI assistance, if used, including one concrete example of how you verified an AI-generated suggestion.
+
+Submit:
+
+1) A rendered HTML report and the R Markdown/source files needed to reproduce it (this file  with your code). 
+IMPORTANT: Use relative paths and ensure the analysis can run from the supplied input files in a fresh R session. Include random seeds for any stochastic steps.
+
+2) A pdf presentation. In the group presentation, explain QC decisions, statistical decisions and interpretation supported by your results. Every member should be able to explain these choices and a relevant part of the analysis.
+
+Assessment follows the course homework policy. Scientific reasoning, correctness, reproducibility and interpretation matter; obtaining statistically significant associations is not a grading criterion.
