@@ -61,20 +61,10 @@ Verify dimensions, unique identifiers, phenotype coding, genotype values and cor
 
 
 
-
 # 1. Upload and Preprocess the data
 
 
 ```{r message = FALSE, results='hold', warning=FALSE}
-
-################################### PART 1 ##############################
-
-cat("\014")
-rm(list = ls())
-# Corrisponds to clc, close all and clear all in matlab
-
-##setwd("C:/Users/vitto/Desktop/Homework1")
-
 
 # Load the study dataset
 # check.names = FALSE keeps the SNP identifiers unchanged.
@@ -127,20 +117,21 @@ cat("Percentage of missing data across all genotypes:", round((missing_cells / t
 # Variants with no observed genotype (all NA)
 cat("Variants with all genotypes missing:",
     sum(colSums(!is.na(genotypes)) == 0), "\n")
-
-cat("This is Alice Branch")
 ```
 
 
-# 2. Quality Control 
-Decision to explain: Which QC pipeline have you chosen? Which QC choices had the largest practical effect? Why is that choice defensible?
+# 2 . Quality Control 
+**Decision to explain:** Which QC pipeline have you chosen? Which QC choices had the largest practical effect? Why is that choice defensible?
 
 Choose and justify your thresholds; distinguish a diagnostic flag from an automatic exclusion. Consider how sample and variant filtering affect one another, and repeat relevant summaries after filtering. Handle variants with no observed genotypes explicitly.
 
 Provide a filtering log showing the order of operations and the numbers of individuals and variants retained after each step. Avoid counting the same exclusion twice. If a check removes nothing, report that result; exclusions are not a goal in themselves.
 
-
 ```{r message = FALSE, results='hold', warning=FALSE}
+# -----------------------------------------------
+#              QUALITY CONTROL 
+# -----------------------------------------------
+
 # Now we can visualize the distribution of NAs on both rows and column in order to have some more hint on which value could be a good threshold for the following QC.
 
 # Calculated percentage of missingness (NAs) for each individual and SNP
@@ -148,6 +139,7 @@ row_na_pct <- rowMeans(is.na(genotypes)) * 100
 col_na_pct <- colMeans(is.na(genotypes)) * 100
 
 # Set up the plotting layout to show one figure with two graphs (1 row, 2 columns)
+# they only show the data, they remove nothing
 par(mfrow = c(1, 2))
 
 # Histogram for Individuals (Row Missingness)
@@ -158,9 +150,6 @@ hist(row_na_pct,
      main = "Missingness per Individual", 
      xlab = "Missing Data (%)", 
      ylab = "Number of Individuals")
-
-# Add useful threshold line at x% 
-# abline(v = x, col = "red", lwd = 2, lty = 2)
 
 # Histogram for Variants (Column Missingness)
 hist(col_na_pct, 
@@ -185,18 +174,16 @@ cat("\n--- Summary of Variant Missingness (%) ---\n")
 print(summary(col_na_pct))
 
 # The outputs of this part denote that:
-# 1) Every single individuals has circa 1% of missing values. The minimum and the maximum percentage of NAs in rows are extremely near, so we choose to not set a threshold. We consider as all the samples have passed the basic quality control.
-# 2) On the other hand the missingness per SNP range is larger (minimum 0% and maximum 3.44%). We should define a threshold to decide when a specific SNP has too much non identified values to be considered in the analysis. Our decision is to set it at 2%, as discussed in class.
+# 1) Every single individuals has circa 1% of missing values. The minimum and the maximum percentage of NAs in rows are extremely near (0.81-1.16%), so we choose to not set a threshold. We consider as all the samples have passed the basic quality control.
+# 2) On the other hand the variant missingness range is larger (minimum 0% and maximum 3.44%). We should define a threshold. Our decision is to set it at 2% in order to cut off those few variants sitting above 2%.
 
 
 max_snp_miss <- 0.02  # Maximum allowed missingness per SNP (2%)
-min_maf      <- 0.1  # Minimum Minor Allele Frequency threshold (10%)
 
 
 # FOLLOWING PIPELINE EXPLANATION:
-# The following pipeline is based on visual inspection of histograms. Those plots serve as diagnostic flags to inspect the data. Applaying specific numerical threshold (retrieved from the histograms) triggers any automatic exclusion.
+# The following pipeline is based on visual inspection of histograms. Those plots are used as diagnostic flags to inspect the data and choose the thresholds. Automatic exclusions are made by the numerical thresholds chosen.
 
-# First missingness distribution are evaluated to set appropriated thresholds.
 # Next Minor Allele Frequency (MAF) analysis is performed to remove some more uninformative variants.
 # The filtering phase is at the end of this part of code. The filtering step is done using both MAF and Missingness thresholds.
 # Finally summary statistics are repeated.
@@ -207,26 +194,38 @@ min_maf      <- 0.1  # Minimum Minor Allele Frequency threshold (10%)
 # Variant missingness evaluation
 snp_missing <- colMeans(is.na(genotypes))
 pass_snp_miss <- snp_missing <= max_snp_miss
-cat("Variants removed due to missingness (> 2%):", sum(!pass_snp_miss), "\n")
+cat("Variants removed due to missingness (>", max_snp_miss*100, "%):", sum(!pass_snp_miss), "\n")
 
 # MAF Analysis & explicit handling of completely empty variants (all NA)
+# A2 is not necessarily the minor allele, so we take the smaller of the two frequencies.
 mean_geno <- colMeans(genotypes, na.rm = TRUE)
 freq_A2 <- mean_geno / 2
 maf <- pmin(freq_A2, 1 - freq_A2)
 
-# Plot MAF distribution to visually justify the threshold
-hist(maf, 
+# Plot MAF distribution 
+hist(maf[pass_snp_miss], 
      breaks = 50, 
      col = "lightgreen", 
      border = "white",
      main = "Distribution of Minor Allele Frequency (MAF)", 
      xlab = "MAF Value", 
      ylab = "Number of Variants")
-abline(v = min_maf, col = "red", lwd = 2, lty = 2)
 
 # Print MAF summary statistics
-cat("MAF Summary Statistics")
+cat("MAF Summary Statistics\n")
 print(summary(maf))
+
+# Effect of different MAF thresholds (used to choose and justify the threshold)
+maf_thresholds <- c(0.01, 0.05, 0.10)
+maf_comparison <- data.frame(
+  MAF_threshold = maf_thresholds,
+  Variants_retained = sapply(maf_thresholds,
+                             function(t) sum(pass_snp_miss & !is.na(maf) & maf >= t))
+)
+print(maf_comparison)
+
+# MAF threshold chosen after inspecting the plot and the table above
+min_maf <- 0.05  # minimum minor allele frequency (5%)
 
 # Apply combined variant filters and subset the dataset cleanly at the end
 # (Handling potential NaN values from variants with 0 observations)
@@ -236,7 +235,7 @@ pass_snp <- pass_snp_miss & pass_maf
 cat("Final Variant QC Summary (Filtering Log)")
 cat("Initial variants:", ncol(genotypes), "\n")
 cat("Variants removed by missingness (> 2%):", sum(!pass_snp_miss), "\n")
-cat("Variants removed by MAF (< 10%):", sum(pass_snp_miss & !pass_maf), "\n")
+cat("Variants removed by MAF (< 5%):", sum(pass_snp_miss & !pass_maf), "\n")
 cat("Total variants successfully retained:", sum(pass_snp), "\n")
 
 # Create the final clean dataset ready for association testing
@@ -253,10 +252,12 @@ cat("Remaining missing data percentage in clean genotypes:",
 # SUMMARY OF RESULTS:
 # Effect of Filtering: 
 # - Individual filtering was bypassed as a diagnostic check confirmed uniform and extremely low missingness (~1%) across all samples, avoiding unnecessary data loss.
-# - Variant filtering (missingness > 2% and MAF < 10%) successfully removed low-quality and uninformative data, reducing the overall dataset dimensions while slightly decreasing the global missing data percentage (from ~1.00% to 0.97%).
+# - Variant filtering (missingness > 2% and MAF < 5%) successfully removed low-quality and uninformative data, reducing the overall dataset dimensions while slightly decreasing the global missing data percentage (from ~1.00% to 0.97%).
 
 # Considerations:
 # Removing variants exceeding the 2% missingness threshold eliminates tech-driven errors, while the MAF threshold filters out ultra-rare alleles. This ensures a robust and clean genotype matrix ready for association testing.
+
+```
 
 ```
 
