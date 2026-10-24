@@ -75,15 +75,18 @@ rm(list = ls())
 
 ##setwd("C:/Users/vitto/Desktop/Homework1")
 
+
 # Load the study dataset
-study_data <- read.delim("study.tsv", header = TRUE, stringsAsFactors = FALSE)
+# check.names = FALSE keeps the SNP identifiers unchanged.
+study_data <- read.delim("study.tsv", header = TRUE,
+                         stringsAsFactors = FALSE, check.names = FALSE)
 
 # First of all: visualization of the imported data
 #View(study_data, title = "Full Study Data")
 
 # Dataset dimensions
 cat("Dataset dimensions (rows, columns):", dim(study_data), "\n")
-# 494 individuals and 28503 SNPs 
+# 494 individuals and 28503 columns (2 info columns + 28501 SNPs)
 
 # Check on possible duplication of the individuals
 cat("Total samples:", nrow(study_data), "\n")
@@ -95,25 +98,39 @@ cat("Unique sample IDs:", length(unique(study_data$sample_id)), "\n")
 # variables associated are 0 = control (the sample doesn't have the disease), 1 = case (has the disease)
 cat("\nPhenotype counts:\n")
 print(table(study_data$case_control, useNA = "ifany"))
+# Automatic check: only values 0 and 1, no NA
+stopifnot(all(study_data$case_control %in% c(0, 1)))
 
 # At this moment our data contains both the 'name' of the individuals and their case/control associations. For the analysis we want to do is better to create a new database: the genotypes table contains only individuals positions and SNPs.
 genotypes <- study_data[, -(1:2)]
 #View(genotypes, title = "After fist 2 column remuval - Genotypes Only")
 
-# The following row will show genotypes dataset dimentions
-cat("Dataset dimensions (rows, columns):", dim(genotypes), "\n")
+# The following row will show genotypes dataset dimensions
+cat("Genotype matrix dimensions (individuals, SNPs):", dim(genotypes), "\n")
+
+# Check for duplicated SNP identifiers
+stopifnot(!any(duplicated(colnames(genotypes))))
+cat("Unique SNP identifiers:", length(unique(colnames(genotypes))), "\n")
 
 # Another important step is to check on the kind of data we have in the table.
 # In our case 0, 1, 2, NA are the possibilities. By running the following lines of code we are confirming that no wrong elements are present in the table.
 unique_genos <- unique(unlist(lapply(genotypes, unique)))
 cat("Observed genotype values:", sort(unique_genos, na.last = TRUE), "\n")
+stopifnot(all(unique_genos %in% c(0, 1, 2, NA)))
 
 # Once we have note NAs, we should quantified their presence
 total_cells <- prod(dim(genotypes))
 missing_cells <- sum(is.na(genotypes))
 cat("Total missing genotype calls:", missing_cells, "\n")
 cat("Percentage of missing data across all genotypes:", round((missing_cells / total_cells) * 100, 2), "%\n")
+
+# Variants with no observed genotype (all NA)
+cat("Variants with all genotypes missing:",
+    sum(colSums(!is.na(genotypes)) == 0), "\n")
+
+cat("This is Alice Branch")
 ```
+
 
 # 2. Quality Control 
 Decision to explain: Which QC pipeline have you chosen? Which QC choices had the largest practical effect? Why is that choice defensible?

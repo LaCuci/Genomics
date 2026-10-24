@@ -426,15 +426,18 @@ rm(list = ls())
 
 ##setwd(&quot;C:/Users/vitto/Desktop/Homework1&quot;)
 
+
 # Load the study dataset
-study_data &lt;- read.delim(&quot;study.tsv&quot;, header = TRUE, stringsAsFactors = FALSE)
+# check.names = FALSE keeps the SNP identifiers unchanged.
+study_data &lt;- read.delim(&quot;study.tsv&quot;, header = TRUE,
+                         stringsAsFactors = FALSE, check.names = FALSE)
 
 # First of all: visualization of the imported data
 #View(study_data, title = &quot;Full Study Data&quot;)
 
 # Dataset dimensions
 cat(&quot;Dataset dimensions (rows, columns):&quot;, dim(study_data), &quot;\n&quot;)
-# 494 individuals and 28503 SNPs 
+# 494 individuals and 28503 columns (2 info columns + 28501 SNPs)
 
 # Check on possible duplication of the individuals
 cat(&quot;Total samples:&quot;, nrow(study_data), &quot;\n&quot;)
@@ -446,24 +449,35 @@ cat(&quot;Unique sample IDs:&quot;, length(unique(study_data$sample_id)), &quot;
 # variables associated are 0 = control (the sample doesn&#39;t have the disease), 1 = case (has the disease)
 cat(&quot;\nPhenotype counts:\n&quot;)
 print(table(study_data$case_control, useNA = &quot;ifany&quot;))
+# Automatic check: only values 0 and 1, no NA
+stopifnot(all(study_data$case_control %in% c(0, 1)))
 
 # At this moment our data contains both the &#39;name&#39; of the individuals and their case/control associations. For the analysis we want to do is better to create a new database: the genotypes table contains only individuals positions and SNPs.
 genotypes &lt;- study_data[, -(1:2)]
 #View(genotypes, title = &quot;After fist 2 column remuval - Genotypes Only&quot;)
 
-# The following row will show genotypes dataset dimentions
-cat(&quot;Dataset dimensions (rows, columns):&quot;, dim(genotypes), &quot;\n&quot;)
+# The following row will show genotypes dataset dimensions
+cat(&quot;Genotype matrix dimensions (individuals, SNPs):&quot;, dim(genotypes), &quot;\n&quot;)
+
+# Check for duplicated SNP identifiers
+stopifnot(!any(duplicated(colnames(genotypes))))
+cat(&quot;Unique SNP identifiers:&quot;, length(unique(colnames(genotypes))), &quot;\n&quot;)
 
 # Another important step is to check on the kind of data we have in the table.
 # In our case 0, 1, 2, NA are the possibilities. By running the following lines of code we are confirming that no wrong elements are present in the table.
 unique_genos &lt;- unique(unlist(lapply(genotypes, unique)))
 cat(&quot;Observed genotype values:&quot;, sort(unique_genos, na.last = TRUE), &quot;\n&quot;)
+stopifnot(all(unique_genos %in% c(0, 1, 2, NA)))
 
 # Once we have note NAs, we should quantified their presence
 total_cells &lt;- prod(dim(genotypes))
 missing_cells &lt;- sum(is.na(genotypes))
 cat(&quot;Total missing genotype calls:&quot;, missing_cells, &quot;\n&quot;)
-cat(&quot;Percentage of missing data across all genotypes:&quot;, round((missing_cells / total_cells) * 100, 2), &quot;%\n&quot;)</code></pre>
+cat(&quot;Percentage of missing data across all genotypes:&quot;, round((missing_cells / total_cells) * 100, 2), &quot;%\n&quot;)
+
+# Variants with no observed genotype (all NA)
+cat(&quot;Variants with all genotypes missing:&quot;,
+    sum(colSums(!is.na(genotypes)) == 0), &quot;\n&quot;)</code></pre>
 <pre><code>## Dataset dimensions (rows, columns): 494 28503 
 ## Total samples: 494 
 ## Unique sample IDs: 494 
@@ -472,10 +486,12 @@ cat(&quot;Percentage of missing data across all genotypes:&quot;, round((missing
 ## 
 ##   0   1 
 ## 227 267 
-## Dataset dimensions (rows, columns): 494 28501 
+## Genotype matrix dimensions (individuals, SNPs): 494 28501 
+## Unique SNP identifiers: 28501 
 ## Observed genotype values: 0 1 2 NA 
 ## Total missing genotype calls: 140708 
-## Percentage of missing data across all genotypes: 1 %</code></pre>
+## Percentage of missing data across all genotypes: 1 %
+## Variants with all genotypes missing: 0</code></pre>
 </div>
 <div id="quality-control" class="section level1">
 <h1>2. Quality Control</h1>
