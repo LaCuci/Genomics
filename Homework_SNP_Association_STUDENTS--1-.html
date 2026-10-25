@@ -416,8 +416,66 @@ investigation?</p>
 values and correspondence with annotation. Describe the numbers of cases
 and controls and the initial number of variants.</p>
 </div>
+<div id="our-plan-for-this-homework" class="section level1">
+<h1>Our Plan for this Homework</h1>
+<p>We are given a set of synthetic SNP data from chromosome 10. We are
+asked to find if any of the SNP variants are associalted to the status,
+so to find if the presence of a modification in one or both alleles in a
+precise position, or the absence of a modification of the allele in a
+precise position, can give information on the status of the individual.
+We are going to achieve this by doing an accurate statistical analysis
+on the variants. We are going to prepare the data for our analysis with
+the industry standard consensus operations that are done to filter out
+potential flawed data that might hinder the results of our analysis.</p>
+<p>In part 1 we preprocess the data by searching if there are wrong
+elements in our data like a duplicated column/row or values that are not
+conform to the ones we are prepared to operate on.</p>
+<p>In part 2 we apply other Quality control Techniques to the data : we
+remove any individual whose relative frequency on the variants of the
+Null (N/A) information is over 2%, because we don’t want to take into
+account individuals where we don’t have enough information, as the whole
+sample might be inaccurate or biased.</p>
+<p>We filter out SNP with high rates of missing data because they will
+have a lower power than the other SNPs so we could not handle the
+information they would give in the same way as the information given by
+other SNPs with complete data. We also check Minor Allele Frequency : we
+filter out rare variants as they too lack statistical power, and
+therefore would not yield tangible results.</p>
+<p>We SHOULD also apply Hardy-Weinberg Equilibrium (HWE) on the controls
+only to look for deviations from expected frequencies, as they often
+indicate errors.</p>
+<p>Part 3 is the heart of the analysis as it contains the statistical
+tests that give the informations that we then use to decide if any SNP
+variant in any specific position can give a statistic relevant clue to
+wether the individual’s status.</p>
+<p>We decide to use the Chi squared test because we have categorical
+variables (case/control, 0/1/2) and because all other hypothesis of the
+chi square test are fulfilled (….are they? ….) We decide to test the
+null hypothesis “The status of the individual is independent from the
+variant of the SNP in the specific position”</p>
+<p>Since we are doing multiple testing as there are many positions and
+variants to test, we decide to correct the results of the Chi square
+test for the multiple hypothesis testing to limit the type 1 error
+(false positives) that would otherwise grow to be huge. We decide use
+the easiest method to do this : the Bonferroni correction.</p>
+<p>We are aware that there could be some covariates affecting the
+analysis, like common ancestry between individuals in the study, so we
+SHOULD do a Principal Component Analysis to check wether this is the
+case or not.</p>
+</div>
 <div id="upload-and-preprocess-the-data" class="section level1">
 <h1>1. Upload and Preprocess the data</h1>
+<p>In this section, we preprocess the data to prepare it for quality
+control. To upload it, we load the study.tsv file and the variants.tsv
+file into the R environment and check simple feasibility requirements,
+such as whether the values belong to the set of expected values for each
+column (0, 1, 2, or NA) and if there are any repeated samples that need
+to be removed. We check the case/control counts to ensure that both
+categories are well represented. We then separate the sample IDs and
+phenotype data from the genomic data to create a standalone genotype
+matrix. Finally, we print out the dimensions of this matrix and extract
+the initial information on how much missing data (NAs) is present across
+the variants.</p>
 <pre class="r"><code># Load the study dataset
 # check.names = FALSE keeps the SNP identifiers unchanged.
 study_data &lt;- read.delim(&quot;study.tsv&quot;, header = TRUE,
@@ -497,6 +555,31 @@ Handle variants with no observed genotypes explicitly.</p>
 numbers of individuals and variants retained after each step. Avoid
 counting the same exclusion twice. If a check removes nothing, report
 that result; exclusions are not a goal in themselves.</p>
+</div>
+<div id="our-quality-control-pipeline-explained" class="section level1">
+<h1>Our Quality Control pipeline explained</h1>
+<p>We implemented a sequential quality control pipeline that relies on
+the concepts we have seen in class. We first generate histograms of
+missingness and Minor Allele Frequency (MAF), which help us understand
+the data distribution before establishing strict numerical thresholds
+that trigger automatic exclusions.</p>
+<p>When we consider how sample and variant filtering affect one another,
+we must account for the fact that if you remove some individuals whose
+SNPs had a high NA percentage, then the SNPs NA values are reduced and
+this will lower the number of SNPs positions that we have to remove due
+to too many NAs. However, because our histograms reveal that individual
+missingness is uniformly low across the board, we bypass sample
+exclusions entirely to preserve our dataset. For our variants, we set an
+automatic exclusion threshold for SNPs with greater than 2% missingness
+to eliminate error-prone data.</p>
+<p>We handle variants with no observed genotypes explicitly by ensuring
+their uncalculable MAF naturally triggers their safe removal during the
+frequency check.</p>
+<p>Finally, to answer which QC choices had the largest practical effect
+and why that choice is defensible,our application of a 10% MAF threshold
+had the most massive impact on the dataset by aggressively stripping
+away ultra-rare alleles. This choice is defensible because rare variants
+don’t have the statistical power required for detection.</p>
 <pre class="r"><code># -----------------------------------------------
 #              QUALITY CONTROL 
 # -----------------------------------------------
@@ -647,16 +730,41 @@ cat(&quot;Remaining missing data percentage in clean genotypes:&quot;,
 ## Total variants successfully retained: 24350 
 ## Post-Filtering Summary VerificationFinal dimensions of clean dataset: 494 24350 
 ## Remaining missing data percentage in clean genotypes: 0.97 %</code></pre>
-<pre><code>
-# 3. Test SNP–phenotype associations
-
-Apply your prespecified primary method to every variant retained after QC, documenting any variants that cannot be tested. Do not restrict association testing to a few selected SNPs. State the null hypothesis, genotype encoding and assumptions. If you use a chi-squared test, explain its degrees of freedom and assess whether the approximation is appropriate. If you use logistic regression, explain the interpretation of the genotype coefficient and how you handle estimation failures or separation.
-
-**Worked example.** For one tested SNP, show the case/control counts for each observed genotype and explain how these data enter your chosen test or model. State the null hypothesis and interpret its p-value. If you use a regression model, also interpret the estimated effect with its uncertainty. This example complements the analysis of all retained SNPs.
-
-
-``` r
-################################ PART 3 ################################
+</div>
+<div id="quality-control-results" class="section level1">
+<h1>Quality Control Results</h1>
+<p>We began with an initial dataset of 494 individuals and 28,501
+variants. Our first operation evaluated individual missingness, and
+because if a check removes nothing, we must report that result since
+exclusions are not a goal in themselves. We report that 0 individuals
+were excluded, leaving all 494 samples successfully retained. Our second
+operation applied the 2% variant missingness threshold, which removed
+803 variants.</p>
+<p>Our third operation applied the 10% MAF threshold to the remaining
+data, which removed an additional 6,552 uninformative variants without
+overlapping or double-counting the previous missingness exclusions.</p>
+<p>Following these steps, a total of 21,146 variants were successfully
+retained.</p>
+<p>The remaining missing data percentage in the clean genotypes
+decreased to 0.97%.</p>
+</div>
+<div id="test-snpphenotype-associations" class="section level1">
+<h1>3. Test SNP–phenotype associations</h1>
+<p>Apply your prespecified primary method to every variant retained
+after QC, documenting any variants that cannot be tested. Do not
+restrict association testing to a few selected SNPs. State the null
+hypothesis, genotype encoding and assumptions. If you use a chi-squared
+test, explain its degrees of freedom and assess whether the
+approximation is appropriate. If you use logistic regression, explain
+the interpretation of the genotype coefficient and how you handle
+estimation failures or separation.</p>
+<p><strong>Worked example.</strong> For one tested SNP, show the
+case/control counts for each observed genotype and explain how these
+data enter your chosen test or model. State the null hypothesis and
+interpret its p-value. If you use a regression model, also interpret the
+estimated effect with its uncertainty. This example complements the
+analysis of all retained SNPs.</p>
+<pre class="r"><code>################################ PART 3 ################################
 # ASSOCIATION TEST
 
 # ==========================================

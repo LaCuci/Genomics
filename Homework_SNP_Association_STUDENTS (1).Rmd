@@ -59,9 +59,37 @@ You may revise the plan after inspecting QC diagnostics. Record the reason for e
 
 Verify dimensions, unique identifiers, phenotype coding, genotype values and correspondence with annotation. Describe the numbers of cases and controls and the initial number of variants.
 
+# Our Plan for this Homework 
+
+We are given a set of synthetic SNP data from chromosome 10. We are asked to find if any of the SNP variants are associalted to the status, so to find if the presence of a modification in one or both alleles in a precise position, or the absence of a modification of the allele in a precise position, can give information on the status of the individual. 
+We are going to achieve this by doing an accurate statistical analysis on the variants.
+We are going to prepare the data for our analysis with the industry standard consensus operations that are done to filter out potential flawed data that might hinder the results of our analysis. 
+
+In part 1 we preprocess the data by searching if there are wrong elements in our data like a duplicated column/row or values that are not conform to the ones we are prepared to operate on. 
+
+In part 2 we apply other Quality control Techniques to the data : we remove any individual whose relative frequency on the variants of the Null (N/A) information  is over 2%, because we don’t want to take into account individuals where we don’t have enough information, as the whole sample might be inaccurate or biased. 
+
+We filter out SNP with high rates of missing data because they will have a lower power than the other SNPs so we could not handle the information they would give in the same way as the information given by other SNPs with complete data. 
+We also check Minor Allele Frequency : we filter out rare variants as they too lack statistical power, and therefore would not yield tangible results.
+
+We SHOULD also apply Hardy-Weinberg Equilibrium (HWE) on the controls only to look for deviations from expected frequencies, as they often indicate errors.
+
+Part 3 is the heart of the analysis as it contains the statistical tests that give the informations that we then use to decide if any SNP variant in any specific position can give a statistic relevant clue to wether the individual’s status. 
+
+We decide to use the Chi squared test because we have categorical variables (case/control, 0/1/2) and because all other hypothesis of the chi square test are fulfilled (....are they? ….) 
+We decide to test the null hypothesis “The status of the individual is independent from the variant of the SNP in the specific position” 
+
+Since we are doing multiple testing as there are many positions and variants to test, we decide to correct the results of the Chi square test for the multiple hypothesis testing to limit the type 1 error (false positives) that would otherwise grow to be huge. We decide use the easiest method to do this : the Bonferroni correction. 
+
+We are aware that there could be some covariates affecting the analysis, like common ancestry between individuals in the study,  so we SHOULD do a Principal Component Analysis to check wether  this is the case or not. 
+
+
 
 
 # 1. Upload and Preprocess the data
+
+In this section, we preprocess the data to prepare it for quality control. To upload it, we load the study.tsv file and the variants.tsv file into the R environment and check simple feasibility requirements, such as whether the values belong to the set of expected values for each column (0, 1, 2, or NA) and if there are any repeated samples that need to be removed.
+We check the case/control counts to ensure that both categories are well represented. We then separate the sample IDs and phenotype data from the genomic data to create a standalone genotype matrix. Finally, we print out the dimensions of this matrix and extract the initial information on how much missing data (NAs) is present across the variants.
 
 
 ```{r message = FALSE, results='hold', warning=FALSE}
@@ -126,6 +154,18 @@ cat("Variants with all genotypes missing:",
 Choose and justify your thresholds; distinguish a diagnostic flag from an automatic exclusion. Consider how sample and variant filtering affect one another, and repeat relevant summaries after filtering. Handle variants with no observed genotypes explicitly.
 
 Provide a filtering log showing the order of operations and the numbers of individuals and variants retained after each step. Avoid counting the same exclusion twice. If a check removes nothing, report that result; exclusions are not a goal in themselves.
+
+# Our Quality Control pipeline explained 
+
+We implemented a sequential quality control pipeline that relies on the concepts we have seen in class. We first generate histograms of missingness and Minor Allele Frequency (MAF), which help us understand the data distribution before establishing strict numerical thresholds that trigger automatic exclusions. 
+
+When we consider how sample and variant filtering affect one another, we must account for the fact that if you remove some individuals whose SNPs had a high NA percentage, then the SNPs NA values are reduced and this will lower the number of SNPs positions that we have to remove due to too many NAs. 
+However, because our histograms reveal that individual missingness is uniformly low across the board, we bypass sample exclusions entirely to preserve our dataset. 
+For our variants, we set an automatic exclusion threshold for SNPs with greater than 2% missingness to eliminate error-prone data.
+
+We handle variants with no observed genotypes explicitly by ensuring their uncalculable MAF naturally triggers their safe removal during the frequency check. 
+
+Finally, to answer which QC choices had the largest practical effect and why that choice is defensible,our application of a 10% MAF threshold had the most massive impact on the dataset by aggressively stripping away ultra-rare alleles. This choice is defensible because rare variants don’t have the statistical power required for detection.
 
 ```{r message = FALSE, results='hold', warning=FALSE}
 # -----------------------------------------------
@@ -259,13 +299,37 @@ cat("Remaining missing data percentage in clean genotypes:",
 
 ```
 
-```
+# Quality Control Results 
+
+We began with an initial dataset of 494 individuals and 28,501 variants. 
+Our first operation evaluated individual missingness, and because if a check removes nothing, we must report that result since exclusions are not a goal in themselves. 
+We report that 0 individuals were excluded, leaving all 494 samples successfully retained. Our second operation applied the 2% variant missingness threshold, which removed 803 variants. 
+
+Our third operation applied the 10% MAF threshold to the remaining data, which removed an additional 6,552 uninformative variants without overlapping or double-counting the previous missingness exclusions. 
+
+Following these steps, a total of 21,146 variants were successfully retained. 
+
+The remaining missing data percentage in the clean genotypes decreased to 0.97%.
 
 # 3. Test SNP–phenotype associations
 
 Apply your prespecified primary method to every variant retained after QC, documenting any variants that cannot be tested. Do not restrict association testing to a few selected SNPs. State the null hypothesis, genotype encoding and assumptions. If you use a chi-squared test, explain its degrees of freedom and assess whether the approximation is appropriate. If you use logistic regression, explain the interpretation of the genotype coefficient and how you handle estimation failures or separation.
 
 **Worked example.** For one tested SNP, show the case/control counts for each observed genotype and explain how these data enter your chosen test or model. State the null hypothesis and interpret its p-value. If you use a regression model, also interpret the estimated effect with its uncertainty. This example complements the analysis of all retained SNPs.
+
+# Explanation of our Statistic tests 
+
+In this section, we test SNP-phenotype associations by applying a 2-degree-of-freedom Chi-squared test to every variant retained after quality control, testing the null hypothesis that there is complete independence between disease status and genotype frequencies. We use 2 degrees of freedom because we are comparing a 2x3 contingency table (2 phenotype statuses by 3 possible genotypes) and the degree of freedom is calculated as (2-1)*(3-1)=2
+
+We explicitly account for missing calls by safely omitting NAs rather than interpreting them as genotype 0, and we record the exact number of individuals contributing to each test to ensure that we do not silently discard warnings, failed fits, or untestable variants. 
+
+To illustrate our methodology, we provide an example of one tested SNP that shows the case/control counts for each observed genotype within a contingency table, explains how these data enter the chi-squared approximation, states the null hypothesis, and interprets the resulting p-value. 
+
+Because we are evaluating thousands of variants simultaneously, we must control for multiple testing; we state that our family of hypotheses encompasses all retained independent SNPs, and we control the Family-Wise Error Rate (FWER) by applying a Bonferroni correction, reporting the decision threshold. A Bonferroni-adjusted p-value represents the probability of observing these results by chance across the entire family of tests. An adjusted p-value below 0.05 indicates the variant remains statistically significant even after aggressively penalizing for multiple comparisons
+
+We then compile a comprehensive results table featuring the SNP identifier, position, sample size, allele frequency, test model, raw and adjusted p-values, and the success status for every analysis. 
+
+Finally, we plot the -log10(p) against the genomic position along chromosome 10 to visually map where association evidence clusters across the region, explain what these plots show relative to our significance thresholds, and report exactly how many variants pass our chosen multiple-testing criterion without changing our method to chase a significant result.
 
 ```{r message = FALSE, results='hold', warning=FALSE}
 ################################ PART 3 ################################
@@ -367,31 +431,6 @@ bonferroni_thresh <- 0.05 / length(valid_p_vals)
 abline(h = -log10(bonferroni_thresh), col = "red", lty = 2, lwd = 2) # Genome-wide threshold
 
 
-# ==============================================================================
-# WRITTEN SUMMARY AND INTERPRETATION OF ASSOCIATION RESULTS:
-#
-# 1. Overall Association Results:
-#    - A total of retained variants were evaluated for association with the case/control 
-#      phenotype using Pearson's Chi-squared test on 3x2 contingency tables (df = 2).
-#    - The null hypothesis (H0) assumes independence between genotype frequencies 
-#      and disease status across the sample population.
-#
-# 2. Interpretation of P-values & Multiple Testing Correction:
-#    - The orange dashed line indicates nominal significance (p < 0.05). Variants above 
-#      this line show raw statistical evidence of association.
-#    - Due to performing thousands of independent tests, multiple testing correction 
-#      is strictly required to control the Family-Wise Error Rate (FWER). The red 
-#      dashed line represents the conservative Bonferroni threshold (alpha = 0.05 / N_tests).
-#    - Variants exceeding the Bonferroni line are considered robust, genome-wide 
-#      significant candidates that warrant further functional and fine-mapping validation.
-#
-# 3. Limitations of the Chi-squared Approach:
-#    - While computationally efficient, the 2-df Chi-squared test treats genotype 
-#      categories unorderly and does not explicitly model an additive genetic effect. 
-#      Additionally, it cannot adjust for potential sample covariates (such as 
-#      population stratification or age), which could be addressed using multi-variable 
-#      logistic regression models in follow-up analyses.
-# ==============================================================================
 
 ###################### NOTE FOR THE FUTURE ###############################
 #Summary Recommendation
@@ -472,6 +511,28 @@ abline(h = -log10(0.05), col = "yellow", lty = 2, lwd = 2)        # Nominal thre
 abline(h = -log10(decision_threshold), col = "red", lty = 2, lwd = 2) # Bonferroni threshold
 ```
 
+# WRITTEN SUMMARY AND INTERPRETATION OF ASSOCIATION RESULTS:
+ 1. Overall Association Results:
+    - A total of retained variants were evaluated for association with the case/control 
+      phenotype using Pearson's Chi-squared test on 3x2 contingency tables (df = 2).
+    - The null hypothesis (H0) assumes independence between genotype frequencies 
+      and disease status across the sample population.
+
+ 2. Interpretation of P-values & Multiple Testing Correction:
+    - The orange dashed line indicates nominal significance (p < 0.05). Variants above 
+      this line show raw statistical evidence of association.
+    - Due to performing thousands of independent tests, multiple testing correction 
+      is strictly required to control the Family-Wise Error Rate (FWER). The red 
+      dashed line represents the conservative Bonferroni threshold (alpha = 0.05 / N_tests).
+    - Variants exceeding the Bonferroni line are considered robust, genome-wide 
+      significant candidates that warrant further functional and fine-mapping validation.
+
+ 3. Limitations of the Chi-squared Approach:
+    - While computationally efficient, the 2-df Chi-squared test treats genotype 
+      categories unorderly and does not explicitly model an additive genetic effect. 
+      Additionally, it cannot adjust for potential sample covariates (such as 
+      population stratification or age), which could be addressed using multi-variable 
+      logistic regression models in follow-up analyses.
 
 Account for missing calls and record the number of individuals contributing to each test. Do not interpret NA as genotype 0. Do not silently discard warnings, failed fits or untestable variants.
 
