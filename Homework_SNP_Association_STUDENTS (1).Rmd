@@ -147,7 +147,7 @@ cat("Variants with all genotypes missing:",
     sum(colSums(!is.na(genotypes)) == 0), "\n")
 ```
 
-# Preprocessing Results
+### Preprocessing Results
 We found that we have no repeated samples and that both categories, cases and control, are well represented.
 We found that we have no repeated SNPs, that the matrix holds just the values we expect to see (SNPs variant or NA for unknown), so we can skip repeated input checks further in the analysis since the starting data has no faults. 
 We found that the unknown variants represent just 1\% of all data and therefore the data is overall valid and worth examining. 
@@ -314,13 +314,13 @@ cat("Remaining missing data percentage in clean genotypes:",
 
 ```
 
-###Quality Control Results & Filtering Log
+### Quality Control Results & Filtering Log
 We began with an initial dataset of 494 individuals and 28,501 variants. Our first operation evaluated individual missingness; because a check that removes nothing must be explicitly reported (as exclusions are not a goal in themselves), we note that 0 individuals were excluded, leaving all 494 samples successfully retained.
 Our second operation applied the 2% variant missingness threshold, which removed 803 error-prone variants. Our third operation applied a 5% MAF threshold to the remaining data, which removed an additional 3,348 ultra-rare variants without overlapping or double-counting the previous missingness exclusions.
 Following these sequential steps, a total of 24,350 variants were successfully retained.
 
 
-###Considerations and Practical Effects:
+### Considerations and Practical Effects:
 Individual filtering was bypassed as our diagnostic checks confirmed uniform and extremely low missingness (~1%) across all samples, avoiding unnecessary data loss. For the variants, removing those exceeding the 2% missingness threshold eliminated tech-driven errors, while the 5% MAF threshold filtered out ultra-rare alleles that lack statistical power. Together, these steps successfully removed low-quality and uninformative data, reducing the overall dataset dimensions (final dimensions: 494 individuals, 24,350 variants) while improving the global missing data percentage from roughly 1.00% down to 0.97%. This ensures a robust and clean genotype matrix ready for association testing.
 
 
@@ -332,31 +332,37 @@ Apply your prespecified primary method to every variant retained after QC, docum
 
 # Explanation of our Statistic tests 
 
-In this section, we test SNP-phenotype associations by applying a 2-degree-of-freedom Chi-squared test to every variant retained after quality control, testing the null hypothesis that there is complete independence between disease status and genotype frequencies. We use 2 degrees of freedom because we are comparing a 2x3 contingency table (2 phenotype statuses by 3 possible genotypes) and the degree of freedom is calculated as (2-1)*(3-1)=2
+We explain step by step what we did in our statistical analysis 
 
-We explicitly account for missing calls by safely omitting NAs rather than interpreting them as genotype 0, and we record the exact number of individuals contributing to each test to ensure that we do not silently discard warnings, failed fits, or untestable variants. 
+### 3A 
+In this section, we test SNP-phenotype associations by applying a 2-degree-of-freedom Pearson Chi-squared test to every variant retained after quality control. We are testing the null hypothesis **there is complete independence between disease status and genotype frequencies** . We use 2 degrees of freedom because we are comparing a 2x3 contingency table (2 phenotype statuses by 3 possible genotypes) and the degree of freedom is calculated as (2-1)*(3-1)=2
 
-To illustrate our methodology, we provide an example of one tested SNP that shows the case/control counts for each observed genotype within a contingency table, explains how these data enter the chi-squared approximation, states the null hypothesis, and interprets the resulting p-value. 
+We opted for omitting missing calls entirely to prevent data distortion rather than misinterpreting them as the reference genotype. 
 
-Because we are evaluating thousands of variants simultaneously, we must control for multiple testing; we state that our family of hypotheses encompasses all retained independent SNPs, and we control the Family-Wise Error Rate (FWER) by applying a Bonferroni correction, reporting the decision threshold. A Bonferroni-adjusted p-value represents the probability of observing these results by chance across the entire family of tests. An adjusted p-value below 0.05 indicates the variant remains statistically significant even after aggressively penalizing for multiple comparisons
+To ensure mathematical validity, we record the exact number of individuals contributing to each test and extract the minimum expected cell count.
+To handle estimation failures, our function verifies data variability, returning NA for monomorphic variants to prevent crashes. Crucially, while our 5% MAF threshold guarantees at least 24 minor genotypes, phenotype imbalances can still push expected cell counts below 20. We calculate and flag these low expected counts to assess the approximation's reliability, ensuring no warnings are silently discarded.
 
-We then compile a comprehensive results table featuring the SNP identifier, position, sample size, allele frequency, test model, raw and adjusted p-values, and the success status for every analysis. 
+### 3B 
 
-Finally, we plot the -log10(p) against the genomic position along chromosome 10 to visually map where association evidence clusters across the region, explain what these plots show relative to our significance thresholds, and report exactly how many variants pass our chosen multiple-testing criterion without changing our method to chase a significant result.
+In this section, we provide a worked example to transparently illustrate our statistical methodology on a single variant. Rather than arbitrarily selecting a variant, we dynamically isolate the SNP with the strongest statistical signal (the lowest raw p-value) from our full analysis.
+We construct and display the observed 2x3 contingency table to detail the exact case and control counts across all three genotype categories. Next, we compute and print the expected counts under the null hypothesis (no association). This explicitly demonstrates how the raw count data enters the Chi-squared model and allows us to manually verify the assumption that expected cell counts remain adequate for the approximation.
+Finally, we extract the test statistic, degrees of freedom, and p-value. To ensure rigorous and unbiased evaluation, we implement an automated interpretation block. This dynamically compares the variant's p-value against both the nominal threshold (p < 0.05) and our conservative Bonferroni threshold, explicitly stating whether we fail to reject the null hypothesis while carefully distinguishing between nominal and genome-wide significance.
 
-# new 
+### 3C
 
-In this section, we test SNP-phenotype associations by applying a 2-degree-of-freedom Pearson Chi-squared test to every variant retained after quality control. We are testing the null hypothesis \textbf "there is complete independence between disease status and genotype frequencies" . We use 2 degrees of freedom because we are comparing a 2x3 contingency table (2 phenotype statuses by 3 possible genotypes) and the degree of freedom is calculated as (2-1)*(3-1)=2
+Because we are evaluating thousands of variants simultaneously across our genomic family of hypotheses, we control the Family-Wise Error Rate (FWER) by applying a Bonferroni correction, yielding an adjusted p-value.
 
-We dopted for omitting missing calls entirely to prevent data distortion rather than misinterpreting them as the reference genotype. 
+We plot the −log 10(p-values) of all tested variants against their genomic positions, incorporating visual reference lines for both the nominal significance threshold (p=0.05) and the conservative Bonferroni threshold.
 
-To ensure mathematical validity, we record the exact number of individuals contributing to each test and extract the minimum expected cell count, explicitly flagging variants where the expected count falls below 5 to avoid silently discarding warnings or unreliable approximations. 
+Given the massive number of independent tests (m≈24,350) and our restricted sample size, we anticipate that the stringent Bonferroni threshold will likely not be met by any variant. 
 
-To illustrate this methodology, we dynamically isolate the SNP with the strongest statistical signal to provide a worked example, detailing its observed versus expected case/control counts within a contingency table and interpreting its p-value. 
+Therefore, we complement the analysis with a False Discovery Rate (FDR) evaluation using the Benjamini-Hochberg procedure. Because FDR controls the proportion of false discoveries rather than enforcing an absolute zero-tolerance for false positives, it serves as a more statistically powerful tool to check for less strong signals, ensuring that the results are checked thoroughly before making a conclusion.
 
-Because we are evaluating thousands of variants simultaneously across our genomic family of hypotheses, we control the Family-Wise Error Rate (FWER) by applying a Bonferroni correction, yielding an adjusted p-value that represents the penalized probability of observing these results by chance across the entire family of tests. 
+### 3D and 3E 
+Finally, we compile a comprehensive results table mapping true physical positions from the variants annotation file, and plot the -log10(p) against the genomic position in Megabases to visually map association evidence across chromosome 10.
 
-We also conduct an exploratory False Discovery Rate (FDR) analysis using the Benjamini-Hochberg method. Finally, we compile a comprehensive results table mapping true physical positions from the variants annotation file, and plot the -log10(p) against the genomic position in Megabases to visually map association evidence across chromosome 10.
+In this sections,  we outline the multiple-testing parameters, documenting the number of tests, the FWER correction method (Bonferroni), and the calculated decision threshold. Next, we construct a comprehensive results matrix encompassing every analyzed variant. In accordance with the assignment requirements, this table integrates the SNP identifier, mapped physical position (extracted from variants.tsv), effective sample size, allele frequency, test degrees of freedom, raw p-values, adjusted p-values, and a categorical status flag detailing whether the approximation assumptions were fully met or flagged for low expected counts.
+Finally, because the standard 2-degree-of-freedom Chi-squared test does not yield a directional effect estimate (such as an odds ratio), we dynamically extract and display the raw genotype-by-phenotype count matrices for the five most significant variants. 
 
 ```{r message = FALSE, results='hold', warning=FALSE}
 # ------------------------------------------
@@ -405,8 +411,8 @@ cat("Variants tested:", sum(!is.na(chisq_results$p_value)), "\n")
 cat("Variants not testable (p-value NA):", sum(is.na(chisq_results$p_value)), "\n")   
 cat("Degrees of freedom of the tests:\n")                                             
 print(table(chisq_results$df, useNA = "ifany"))                                       
-cat("Variants with an expected count < 5 (approximation less reliable):",             
-    sum(chisq_results$min_expected < 5, na.rm = TRUE), "\n")
+cat("Variants with an expected count < 20 (approximation less reliable):",             
+    sum(chisq_results$min_expected < 20, na.rm = TRUE), "\n")
 # Comparing the number of SNPs in the clean dataset with the successfully tested variants
 # confirms that the Chi-squared test was successfully applied to every retained column,
 # ensuring no SNPs were skipped or lost during the automated screening process.
@@ -513,25 +519,6 @@ if (length(significant_fdr_p) > 0) {
 }
 
 
-# NOTE ON THE PLOT: ABSENCE of the FDR LINE
-# Unlike the Bonferroni threshold—which is a fixed theoretical value (alpha / m) calculated prior to observing the distribution of test statistics, the Benjamini-Hochberg FDR threshold is data-dependent. An empirical cutoff line exists only if at least one variant achieves an adjusted q-value <= 0.05.In our dataset, no SNP reached statistical significance under the 5% FDR control (in fact length(significant_fdr_p) == 0). Consequently, the conditional plotting statement if (!is.na(fdr_threshold)) is skipped. This behavior is statistically correct and demonstrates robust handling of null findings: rather than drawing an arbitrary line, the plot reflects the reality that no variants met the empirical threshold required for false discovery rate control.
-
-# After looking to the plot we can consider 2 future pathways:
-# if we want the absolute safest, most conservative guard against false positives and need a simple and universally accepted threshold, we can use Bonferroni threshold. On the other hand we can choose to use FDR (Benjamini-Hochberg) if our dataset has high linkage disequilibrium and we want to maximize your statistical power to find true associations without being overly penalized by the sheer number of tests.
-
-
-
-
-# !! TO DO: COMMENT on 3C steps!!
-
-
-
-
-
-
-
-
-
 # ==========================================
 # 3D. MULTIPLE TESTING CORRECTION & RESULTS TABLE
 # ==========================================
@@ -540,23 +527,19 @@ if (length(significant_fdr_p) > 0) {
 variants <- read.delim("variants.tsv", header = TRUE,
                        stringsAsFactors = FALSE, check.names = FALSE)
 
-# Report number of tests and method
+# Multiple Testing Summary Calculations
 num_tests <- sum(!is.na(chisq_results$p_value))
-cat("\n=== Multiple Testing Summary ===\n")
-cat("Family of hypotheses: Testing all variants retained after QC for association with disease phenotype (SNPs are correlated through LD, so Bonferroni is conservative).\n")
-cat("Error criterion controlled: Family-Wise Error Rate (FWER).\n")
-cat("Method: Bonferroni correction.\n")
-cat("Number of tests (m):", num_tests, "\n")
-
-# Compute Bonferroni adjusted p-values
 raw_p <- chisq_results$p_value
 adjusted_p <- p.adjust(raw_p, method = "bonferroni")
 decision_threshold <- 0.05 / num_tests
-cat(sprintf("Decision threshold (alpha / m): %.4e\n", decision_threshold))
-
-# Count variants passing the multiple-testing criterion
 passing_variants <- sum(adjusted_p <= 0.05, na.rm = TRUE)
-cat("Number of variants passing Bonferroni correction (adjusted p <= 0.05):", passing_variants, "\n")
+
+# Print clean, concise summary
+cat("\n=== Multiple Testing Summary ===\n")
+cat("Method: Bonferroni correction (controls FWER)\n")
+cat("Number of tests (m):", num_tests, "\n")
+cat(sprintf("Decision threshold (alpha / m): %.2e\n", decision_threshold))
+cat("Variants passing Bonferroni correction:", passing_variants, "\n\n")
 
 # Build the comprehensive results table
 snp_ids <- colnames(genotypes_clean)
@@ -568,53 +551,50 @@ stopifnot(!anyNA(snp_positions))
 sample_sizes <- apply(genotypes_clean, 2, function(x) sum(!is.na(x) & !is.na(phenotype)))
 allele_freqs <- colMeans(genotypes_clean, na.rm = TRUE) / 2
 
-# Status column for failed/untestable analyses
-analysis_status <- ifelse(is.na(raw_p), "Failed/Untestable",
-                   ifelse(chisq_results$min_expected < 5,
-                          "Warning: expected count < 5 (approximation less reliable)",
-                          "Success"))
+# Shortened status column for cleaner printing
+analysis_status <- ifelse(is.na(raw_p), "Failed",
+                   ifelse(chisq_results$min_expected < 5, "Warning: Exp < 5", "Success"))
 
-# Test used for all variants (degrees of freedom reported in the DF column)
-test_model <- "Pearson chi-squared"
-
+# Create data frame with concise column names for readable console/HTML output
 results_table <- data.frame(
   SNP_ID = snp_ids,
   Position = snp_positions,
-  Sample_Size = sample_sizes,
-  Allele_Frequency = round(allele_freqs, 4),
-  Test_Model = test_model,
+  N = sample_sizes,
+  Freq = round(allele_freqs, 3),
   DF = chisq_results$df,
-  Raw_P_Value = raw_p,
-  Adjusted_P_Value = adjusted_p,
+  Raw_P = signif(raw_p, 3),
+  Adj_P = signif(adjusted_p, 3),
   Status = analysis_status,
-  stringsAsFactors = FALSE,
-  row.names = NULL
+  stringsAsFactors = FALSE
 )
 
 # Preview of the 10 variants with the smallest raw p-value
-cat("\n=== Preview of Results Table (smallest p-values) ===\n")
-print(head(results_table[order(results_table$Raw_P_Value), ], 10))
+cat("=== Top 10 Associated Variants ===\n")
+# We drop the row names for a cleaner print layout
+top_10 <- head(results_table[order(results_table$Raw_P), ], 10)
+rownames(top_10) <- NULL
+print(top_10)
 
-# No effect estimate with the chi-squared test, so genotype counts by phenotype
-# are reported for the 5 variants with the smallest p-values
-cat("\n=== Genotype counts by phenotype (5 smallest p-values) ===\n")
+# Genotype counts by phenotype for the 5 variants with the smallest p-values
+# (Provided because Chi-squared does not produce an effect estimate)
+cat("\n=== Genotype Counts by Phenotype (Top 5 Variants) ===\n")
 for (k in order(raw_p)[1:5]) {
-  cat("\n", snp_ids[k], "\n")
+  cat("\nVariant:", snp_ids[k], "\n")
   print(table(Phenotype = phenotype, Genotype = genotypes_clean[, k]))
 }
+
 
 # ==========================================
 # 3E. CHROMOSOME 10 GENOMIC POSITION PLOT
 # ==========================================
 
 # y-axis limit computed so that the Bonferroni line is always visible
-# (the highest point is below the threshold when no variant is significant)
 y_max <- max(-log10(decision_threshold),
-             -log10(results_table$Raw_P_Value), na.rm = TRUE) + 0.5
+             -log10(results_table$Raw_P), na.rm = TRUE) + 0.5
 
 # Plot -log10(p) against genomic position along chromosome 10
 # Position shown in megabases (Mb) instead of base pairs
-plot(results_table$Position / 1e6, -log10(results_table$Raw_P_Value),
+plot(results_table$Position / 1e6, -log10(results_table$Raw_P),
      pch = 20,
      col = "darkgreen",
      main = "Chromosome 10 Association Scan (-log10 P-values)",
@@ -622,13 +602,13 @@ plot(results_table$Position / 1e6, -log10(results_table$Raw_P_Value),
      ylab = expression(-log[10](p-value)),
      ylim = c(0, y_max))
 
-# Add Bonferroni threshold line
+# Add significance threshold lines
 abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2)        # Nominal threshold
 abline(h = -log10(decision_threshold), col = "red", lty = 2, lwd = 2) # Bonferroni threshold
 
 # Highlight the variant with the smallest p-value (used later for the LD region)
-top_idx <- which.min(results_table$Raw_P_Value)
-points(results_table$Position[top_idx] / 1e6, -log10(results_table$Raw_P_Value[top_idx]),
+top_idx <- which.min(results_table$Raw_P)
+points(results_table$Position[top_idx] / 1e6, -log10(results_table$Raw_P[top_idx]),
        pch = 1, cex = 2, col = "black")
 
 # Legend
@@ -636,38 +616,14 @@ legend("topright", bty = "n", lty = 2, lwd = 2, col = c("orange", "red"),
        legend = c("Nominal p = 0.05", "Bonferroni threshold"))
 ```
 
-# WRITTEN SUMMARY AND INTERPRETATION OF ASSOCIATION RESULTS:
- 1. Overall Association Results:
-    - A total of retained variants were evaluated for association with the case/control 
-      phenotype using Pearson's Chi-squared test on 3x2 contingency tables (df = 2).
-    - The null hypothesis (H0) assumes independence between genotype frequencies 
-      and disease status across the sample population.
+### Example insight 
 
- 2. Interpretation of P-values & Multiple Testing Correction:
-    - The orange dashed line indicates nominal significance (p < 0.05). Variants above 
-      this line show raw statistical evidence of association.
-    - Due to performing thousands of independent tests, multiple testing correction 
-      is strictly required to control the Family-Wise Error Rate (FWER). The red 
-      dashed line represents the conservative Bonferroni threshold (alpha = 0.05 / N_tests).
-    - Variants exceeding the Bonferroni line are considered robust, genome-wide 
-      significant candidates that warrant further functional and fine-mapping validation.
+The association scan identified a promising nominal signal at variant rs2776932 (raw p=8.76×10 ^ −5), indicating a possible trend. 
+However, when evaluated against our Bonferroni threshold (2.05×10 ^ −6 ) which controls the Family-Wise Error Rate across our 24,350 tests, this variant fails to achieve genome-wide significance, resulting in a classification of nominal-only.
+To account for the conservative nature of Bonferroni, we implemented an exploratory False Discovery Rate (FDR) analysis via the Benjamini-Hochberg procedure, but as its very first rank (i=1) uses the exact same baseline entry gate as Bonferroni, even though the FDR threshold relaxes for subsequent ranks, there is not a single variant in our dataset clears this initial baseline entry gate, no variant can clear any other relaxes treshold. 
+So, the algorithm yields zero significant discoveries (q≤0.05). 
 
- 3. Limitations of the Chi-squared Approach:
-    - While computationally efficient, the 2-df Chi-squared test treats genotype 
-      categories unorderly and does not explicitly model an additive genetic effect. 
-      Additionally, it cannot adjust for potential sample covariates (such as 
-      population stratification or age), which could be addressed using multi-variable 
-      logistic regression models in follow-up analyses.
-
-Account for missing calls and record the number of individuals contributing to each test. Do not interpret NA as genotype 0. Do not silently discard warnings, failed fits or untestable variants.
-
-Control for multiple testing and state the family of hypotheses and error criterion being controlled. Report the number of tests, the method and the decision threshold. Explain what your chosen adjusted p-values mean.
-
-Produce a results table with SNP identifier, position, sample size, allele frequency, test/model, raw and adjusted p-values, and status for failed or untestable analyses. Report effect estimates and uncertainty where your method supports them; otherwise provide genotype counts by phenotype for the variants discussed.
-
-Plot −log10(p) against genomic position along chromosome 10. Explain what the plots show. Report how many variants pass your chosen multiple-testing criterion. Do not change the method to obtain a significant result.
-
-#new 2
+### Conclusions 
 
 The genome-wide association scan successfully evaluated all retained variants, calculating a strict Bonferroni decision threshold of 2.05e-06 (alpha = 0.05 / 24,350 tests) to control for multiple testing. The resulting Manhattan plot maps the -log10(p-values) against their genomic positions, featuring an orange line for nominal significance (p < 0.05) and a red line for the aggressive Bonferroni threshold; an empirical FDR line was intentionally omitted by the algorithm because no variants achieved an adjusted q-value ≤ 0.05. As visualized in the plot and confirmed by our results table, zero variants passed our chosen multiple-testing criterion. The top-associated SNP (highlighted on the plot) shows only nominal significance, meaning that after correcting for the sheer volume of tests, its signal cannot be statistically distinguished from random chance. Because the Chi-squared test does not yield an effect estimate (like an odds ratio), we provided the raw genotype-by-phenotype counts for the top five variants to illustrate their distributions. Ultimately, we fail to reject the null hypothesis, concluding there is no robust evidence of association on chromosome 10. These results are associative, not causal, and the lack of significant findings is likely explained by the limited statistical power of our restricted sample size, the isolation of a single chromosome, and the inability of a basic Chi-squared test to adjust for underlying clinical covariates or population structure.
 
