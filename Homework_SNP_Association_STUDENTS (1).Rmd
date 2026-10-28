@@ -147,6 +147,12 @@ cat("Variants with all genotypes missing:",
     sum(colSums(!is.na(genotypes)) == 0), "\n")
 ```
 
+# Preprocessing Results
+We found that we have no repeated samples and that both categories, cases and control, are well represented.
+We found that we have no repeated SNPs, that the matrix holds just the values we expect to see (SNPs variant or NA for unknown), so we can skip repeated input checks further in the analysis since the starting data has no faults. 
+We found that the unknown variants represent just 1\% of all data and therefore the data is overall valid and worth examining. 
+We found that there are no variants with all genotypes missing --> TODO = EXPLAIN BETTER 
+
 
 # 2 . Quality Control 
 **Decision to explain:** Which QC pipeline have you chosen? Which QC choices had the largest practical effect? Why is that choice defensible?
@@ -155,17 +161,42 @@ Choose and justify your thresholds; distinguish a diagnostic flag from an automa
 
 Provide a filtering log showing the order of operations and the numbers of individuals and variants retained after each step. Avoid counting the same exclusion twice. If a check removes nothing, report that result; exclusions are not a goal in themselves.
 
-# Our Quality Control pipeline explained 
+## Our Quality Control pipeline explained 
 
 We implemented a sequential quality control pipeline that relies on the concepts we have seen in class. We first generate histograms of missingness and Minor Allele Frequency (MAF), which help us understand the data distribution before establishing strict numerical thresholds that trigger automatic exclusions. 
+
+### Missingness Control
 
 When we consider how sample and variant filtering affect one another, we must account for the fact that if you remove some individuals whose SNPs had a high NA percentage, then the SNPs NA values are reduced and this will lower the number of SNPs positions that we have to remove due to too many NAs. 
 However, because our histograms reveal that individual missingness is uniformly low across the board, we bypass sample exclusions entirely to preserve our dataset. 
 For our variants, we set an automatic exclusion threshold for SNPs with greater than 2% missingness to eliminate error-prone data.
 
-We handle variants with no observed genotypes explicitly by ensuring their uncalculable MAF naturally triggers their safe removal during the frequency check. 
+### Check Ancestry and population structure 
 
-Finally, to answer which QC choices had the largest practical effect and why that choice is defensible,our application of a 10% MAF threshold had the most massive impact on the dataset by aggressively stripping away ultra-rare alleles. This choice is defensible because rare variants don’t have the statistical power required for detection.
+Should we perform a PCA analysis to see if there are other factors other than SNPs that are significantly linked to the phenotype? 
+TODO : After LD 
+
+### Allele frequency control 
+
+We know that our final goal is to apply statistical tests to understand if some SNP positions are correlated to the phenotype (case/control) 
+It is important to have enough samples in every SNP variant if we want to do a statistical analysis, otherwise the population would be too small compared to the universe of all individuals to actually get statistically relevant results. 
+This is the reason we check the Minor Allele Frequency.
+
+MAF represents the overall frequency of the less common allele within the dataset. Because every person carries two copies of each SNP, our 494 individuals represent 988 total alleles. 
+
+If a specific SNP has a MAF of 1%, it means the minor allele only appears about 10 times across the entire pool of 988. If we were to test a SNP this rare, we would not have enough individuals carrying the variant to achieve a statistically significant result. This means that about between 5 and 10 people have variant 1 or 2 of the SNP, and we cannot perform a powerful statistical analysis that checks correlation with these individuals, their SNP variant and their phenotype. 
+
+Therefore, if the MAF is too small, we will have too few indivisuals to get a significant statistical result for that SNP and therefore that SNP is not even considered for analysis. 
+
+Therefore, if the MAF is too small, testing the SNP provides no actionable statistical power while unnecessarily increasing our multiple-testing penalty. Consequently, SNPs with a MAF below our threshold are discarded and removed from the association analysis.
+
+We chose 5% Minor Allele Frequency (MAF) threshold. To justify this choice,  we can calculate the worst-case scenario for our statistical power based on our sample size. 
+We previously filtered out SNPs with more than 2% missing values, meaning the maximum number of missing individuals for any retained SNP is approximately 10 (2% of 494). 
+In the worst-case scenario, this leaves 484 valid individuals, contributing a total of 968 alleles to the test pool. 
+
+Applying a 5% MAF threshold to this minimum pool ensures that the minor allele appears at least 48 times (5% of 968). Even if these alleles are entirely concentrated in homozygous individuals (meaning each person carries two copies of the minor variant), this guarantees a minimum of 24 patients representing the minor genotype. 
+
+Because standard statistical models require at least 20 observations in a specific class to be considered robust and reliable, the 5% MAF threshold mathematically guarantees that every variant we test possesses the necessary sample size for a rigorous analysis.
 
 ```{r message = FALSE, results='hold', warning=FALSE}
 # -----------------------------------------------
@@ -220,52 +251,44 @@ print(summary(col_na_pct))
 
 max_snp_miss <- 0.02  # Maximum allowed missingness per SNP (2%)
 
-
-# FOLLOWING PIPELINE EXPLANATION:
-# The following pipeline is based on visual inspection of histograms. Those plots are used as diagnostic flags to inspect the data and choose the thresholds. Automatic exclusions are made by the numerical thresholds chosen.
-
-# Next Minor Allele Frequency (MAF) analysis is performed to remove some more uninformative variants.
-# The filtering phase is at the end of this part of code. The filtering step is done using both MAF and Missingness thresholds.
-# Finally summary statistics are repeated.
-# ====================================================================
-
-# Individuals missingness evaluation: Since all individuals have extremely low missingness (~1%), we keep all samples and do not filter out any rows.
-
 # Variant missingness evaluation
 snp_missing <- colMeans(is.na(genotypes))
 pass_snp_miss <- snp_missing <= max_snp_miss
 cat("Variants removed due to missingness (>", max_snp_miss*100, "%):", sum(!pass_snp_miss), "\n")
 
-# MAF Analysis & explicit handling of completely empty variants (all NA)
+
+# 3. MAF Analysis & explicit handling of completely empty variants (all NA)
 # A2 is not necessarily the minor allele, so we take the smaller of the two frequencies.
 mean_geno <- colMeans(genotypes, na.rm = TRUE)
 freq_A2 <- mean_geno / 2
 maf <- pmin(freq_A2, 1 - freq_A2)
 
-# Plot MAF distribution 
-hist(maf[pass_snp_miss], 
-     breaks = 50, 
-     col = "lightgreen", 
+# MAF threshold chosen (Moved up so the plot can use it for coloring)
+min_maf <- 0.05  # minimum minor allele frequency (5%)
+
+# Calculate the histogram data without plotting it yet
+maf_hist <- hist(maf[pass_snp_miss], breaks = 50, plot = FALSE)
+
+# Create a color vector: orange for bars below the threshold, lightgreen for the rest
+# We check if the left edge of each histogram bin is below our 0.05 threshold
+bar_colors <- ifelse(maf_hist$mids < min_maf, "orange", "lightgreen")
+
+# Plot the MAF distribution with the dynamic colors (Diagnostic Flag)
+plot(maf_hist, 
+     col = bar_colors, 
      border = "white",
      main = "Distribution of Minor Allele Frequency (MAF)", 
      xlab = "MAF Value", 
      ylab = "Number of Variants")
 
+# Add the cutoff line and a legend to make it perfectly clear
+abline(v = min_maf, col = "red", lwd = 2, lty = 2)
+legend("topright", fill = c("orange", "lightgreen"), 
+       legend = c("Removed (MAF < 5%)", "Retained"), bty = "n", border = "white")
+
 # Print MAF summary statistics
 cat("MAF Summary Statistics\n")
 print(summary(maf))
-
-# Effect of different MAF thresholds (used to choose and justify the threshold)
-maf_thresholds <- c(0.01, 0.05, 0.10)
-maf_comparison <- data.frame(
-  MAF_threshold = maf_thresholds,
-  Variants_retained = sapply(maf_thresholds,
-                             function(t) sum(pass_snp_miss & !is.na(maf) & maf >= t))
-)
-print(maf_comparison)
-
-# MAF threshold chosen after inspecting the plot and the table above
-min_maf <- 0.05  # minimum minor allele frequency (5%)
 
 # Apply combined variant filters and subset the dataset cleanly at the end
 # (Handling potential NaN values from variants with 0 observations)
@@ -289,27 +312,17 @@ cat("Remaining missing data percentage in clean genotypes:",
     round((sum(is.na(genotypes_clean)) / prod(dim(genotypes_clean))) * 100, 2), "%\n")
 # Comment: After filtering out on the columns the percentage of NAs in the database is decreased from 1% to 0.97%
 
-# SUMMARY OF RESULTS:
-# Effect of Filtering: 
-# - Individual filtering was bypassed as a diagnostic check confirmed uniform and extremely low missingness (~1%) across all samples, avoiding unnecessary data loss.
-# - Variant filtering (missingness > 2% and MAF < 5%) successfully removed low-quality and uninformative data, reducing the overall dataset dimensions while slightly decreasing the global missing data percentage (from ~1.00% to 0.97%).
-
-# Considerations:
-# Removing variants exceeding the 2% missingness threshold eliminates tech-driven errors, while the MAF threshold filters out ultra-rare alleles. This ensures a robust and clean genotype matrix ready for association testing.
-
 ```
 
-# Quality Control Results 
+###Quality Control Results & Filtering Log
+We began with an initial dataset of 494 individuals and 28,501 variants. Our first operation evaluated individual missingness; because a check that removes nothing must be explicitly reported (as exclusions are not a goal in themselves), we note that 0 individuals were excluded, leaving all 494 samples successfully retained.
+Our second operation applied the 2% variant missingness threshold, which removed 803 error-prone variants. Our third operation applied a 5% MAF threshold to the remaining data, which removed an additional 3,348 ultra-rare variants without overlapping or double-counting the previous missingness exclusions.
+Following these sequential steps, a total of 24,350 variants were successfully retained.
 
-We began with an initial dataset of 494 individuals and 28,501 variants. 
-Our first operation evaluated individual missingness, and because if a check removes nothing, we must report that result since exclusions are not a goal in themselves. 
-We report that 0 individuals were excluded, leaving all 494 samples successfully retained. Our second operation applied the 2% variant missingness threshold, which removed 803 variants. 
 
-Our third operation applied the 10% MAF threshold to the remaining data, which removed an additional 6,552 uninformative variants without overlapping or double-counting the previous missingness exclusions. 
+###Considerations and Practical Effects:
+Individual filtering was bypassed as our diagnostic checks confirmed uniform and extremely low missingness (~1%) across all samples, avoiding unnecessary data loss. For the variants, removing those exceeding the 2% missingness threshold eliminated tech-driven errors, while the 5% MAF threshold filtered out ultra-rare alleles that lack statistical power. Together, these steps successfully removed low-quality and uninformative data, reducing the overall dataset dimensions (final dimensions: 494 individuals, 24,350 variants) while improving the global missing data percentage from roughly 1.00% down to 0.97%. This ensures a robust and clean genotype matrix ready for association testing.
 
-Following these steps, a total of 21,146 variants were successfully retained. 
-
-The remaining missing data percentage in the clean genotypes decreased to 0.97%.
 
 # 3. Test SNP–phenotype associations
 
@@ -331,70 +344,98 @@ We then compile a comprehensive results table featuring the SNP identifier, posi
 
 Finally, we plot the -log10(p) against the genomic position along chromosome 10 to visually map where association evidence clusters across the region, explain what these plots show relative to our significance thresholds, and report exactly how many variants pass our chosen multiple-testing criterion without changing our method to chase a significant result.
 
+# new 
+
+In this section, we test SNP-phenotype associations by applying a 2-degree-of-freedom Pearson Chi-squared test to every variant retained after quality control. We are testing the null hypothesis \textbf "there is complete independence between disease status and genotype frequencies" . We use 2 degrees of freedom because we are comparing a 2x3 contingency table (2 phenotype statuses by 3 possible genotypes) and the degree of freedom is calculated as (2-1)*(3-1)=2
+
+We dopted for omitting missing calls entirely to prevent data distortion rather than misinterpreting them as the reference genotype. 
+
+To ensure mathematical validity, we record the exact number of individuals contributing to each test and extract the minimum expected cell count, explicitly flagging variants where the expected count falls below 5 to avoid silently discarding warnings or unreliable approximations. 
+
+To illustrate this methodology, we dynamically isolate the SNP with the strongest statistical signal to provide a worked example, detailing its observed versus expected case/control counts within a contingency table and interpreting its p-value. 
+
+Because we are evaluating thousands of variants simultaneously across our genomic family of hypotheses, we control the Family-Wise Error Rate (FWER) by applying a Bonferroni correction, yielding an adjusted p-value that represents the penalized probability of observing these results by chance across the entire family of tests. 
+
+We also conduct an exploratory False Discovery Rate (FDR) analysis using the Benjamini-Hochberg method. Finally, we compile a comprehensive results table mapping true physical positions from the variants annotation file, and plot the -log10(p) against the genomic position in Megabases to visually map association evidence across chromosome 10.
+
 ```{r message = FALSE, results='hold', warning=FALSE}
-################################ PART 3 ################################
-# ASSOCIATION TEST
+# ------------------------------------------
+#          ASSOCIATION TEST
+# ------------------------------------------
 
-# ==========================================
-# 3A. TEST SNP-PHENOTYPE ASSOCIATIONS (Chi-squared Test)
-# ==========================================
 
+### 3A. TEST SNP-PHENOTYPE ASSOCIATIONS (Chi-squared Test)
+
+# The first column of the table is re-named as 'phenotype'
 phenotype <- study_clean$case_control
 
-# Function to test association using the Chi-squared test (2x3 contingency table)
+# A personalized function is created to test association using the Chi-squared test with 2x3 contingency table
+
 test_snp_chisq <- function(snp_vector) {
-  # Remove missing values
+  # First of all it removes missing values
   valid_idx <- !is.na(snp_vector) & !is.na(phenotype)
   s <- snp_vector[valid_idx]
   p <- phenotype[valid_idx]
+  n <- length(s)
   
-  # Check for variability in genotypes and phenotype
+  # Check for variability in genotypes and phenotype: The following lines check the variability of both variants and individuals. A 3x2 Chi-squared test requires sufficient observations across genotype categories (0, 1, 2) and phenotypic classes (cases/controls). If data are monomorphic or lack variation, the contingency table will    have empty cells or dimensions smaller than 2x2, causing the statistical test to fail or crash the program. Thus, untestable variants safely return NA.
+  
   if (length(unique(s)) <= 1 || length(unique(p)) <= 1) {
-    return(c(statistic = NA, p_value = NA, df = NA))
+    return(c(n = n, statistic = NA, df = NA, min_expected = NA, p_value = NA))
   }
   
   # Contingency table (Genotype: 0, 1, 2 | Phenotype: Controls 0, Cases 1)
   tbl <- table(s, p)
   
-  # Verify table dimensions are valid (at least 2x2)
-  if (nrow(tbl) < 2 || ncol(tbl) < 2) {
-    return(c(statistic = NA, p_value = NA, df = NA))
-  }
+  # Perform Chi-squared test
+  chisq_res <- suppressWarnings(chisq.test(tbl, correct = FALSE))
   
-  # Perform Pearson's Chi-squared test
-  chisq_res <- chisq.test(tbl, correct = FALSE)
-  
-  return(c(statistic = chisq_res$statistic, p_value = chisq_res$p.value, df = chisq_res$parameter))
+  return(c(n = n, statistic = unname(chisq_res$statistic),
+           df = unname(chisq_res$parameter),
+           min_expected = min(chisq_res$expected),
+           p_value = chisq_res$p.value))
 }
 
 # Apply the test to all retained variants
 chisq_results <- t(sapply(as.data.frame(genotypes_clean), test_snp_chisq))
 chisq_results <- as.data.frame(chisq_results)
 
-cat("\n=== Chi-squared Association Testing Completed ===\n")
-cat("Variants successfully tested:", sum(!is.na(chisq_results$p_value)), "\n")
+cat("\n Chi-squared Association Test \n")
+cat("Variants tested:", sum(!is.na(chisq_results$p_value)), "\n")
+cat("Variants not testable (p-value NA):", sum(is.na(chisq_results$p_value)), "\n")   
+cat("Degrees of freedom of the tests:\n")                                             
+print(table(chisq_results$df, useNA = "ifany"))                                       
+cat("Variants with an expected count < 5 (approximation less reliable):",             
+    sum(chisq_results$min_expected < 5, na.rm = TRUE), "\n")
+# Comparing the number of SNPs in the clean dataset with the successfully tested variants
+# confirms that the Chi-squared test was successfully applied to every retained column,
+# ensuring no SNPs were skipped or lost during the automated screening process.
 
 
-# ==========================================
-# 3B. WORKED EXAMPLE FOR A SINGLE SNP
-# ==========================================
+### 3B. WORKED EXAMPLE FOR A SINGLE SNP
 
-# We chose column 333 SNP for the example
+# We use the SNP with the smallest raw p-value (it is also the starting point of
+# the LD analysis), any other column can be singularly evaluated
+example_col <- which.min(chisq_results$p_value)
+example_snp_name <- colnames(genotypes_clean)[example_col]
+example_snp_data <- genotypes_clean[, example_col]
 
-example_snp_name <- colnames(genotypes_clean)[333]
-example_snp_data <- genotypes_clean[, 333]
+cat("\n Worked Example for SNP", example_snp_name, "\n")
 
-cat("\n=== Worked Example for SNP:", example_snp_name, "===\n")
-
-# 1. Case/Control counts for each observed genotype (Contingency table)
+# A. Contingency table
 obs_table <- table(phenotype, example_snp_data, useNA = "no")
 print("Contingency Table (Rows = Controls 0, Cases 1 | Columns = Genotypes 0, 1, 2):") 
 print(obs_table)
 
-# 2. Run the Chi-squared test on the single SNP
+# B. Run the Chi-squared test on the single SNP
 ex_chisq <- chisq.test(obs_table, correct = FALSE)
 
-# 3. Extract and print results
+# Expected counts under H0 (how the data enter the test: observed vs expected
+# counts in each cell; an expected count < 5 means the approximation is less reliable)
+cat("\nExpected counts under H0 (no association):\n")
+print(round(ex_chisq$expected, 1))
+
+# C. Extract and print results
 stat_val <- ex_chisq$statistic
 df_val <- ex_chisq$parameter
 p_val_ex <- ex_chisq$p.value
@@ -402,42 +443,92 @@ p_val_ex <- ex_chisq$p.value
 cat(sprintf("\nChi-squared Statistic: %.4f\n", stat_val))
 cat(sprintf("Degrees of Freedom: %d\n", df_val))
 cat(sprintf("P-value: %.4e\n", p_val_ex))
+cat(sprintf("P-value in the full analysis (3A): %.4e\n", chisq_results$p_value[example_col]))
 
-if (p_val_ex < 0.05) {
-  cat("Interpretation: The p-value is below the significance threshold (0.05). We reject the null hypothesis; there is a statistically significant association between this genotype and disease status.\n")
+# D. Authomatization of the output
+# The p-value is nominal (one test out of m) and is compared with the Bonferroni
+# threshold, so that no claim is made without correcting for multiple testing
+m_tests <- sum(!is.na(chisq_results$p_value))
+bonf_threshold <- 0.05 / m_tests
+
+if (p_val_ex <= bonf_threshold) {
+  cat("Interpretation: The p-value is below the Bonferroni threshold (", format(bonf_threshold, digits = 3), "). We reject the null hypothesis: there is evidence of association between this genotype and disease status (association, not causation).\n")
+} else if (p_val_ex < 0.05) {
+  cat("Interpretation: The p-value is below 0.05 but above the Bonferroni threshold (", format(bonf_threshold, digits = 3), "). The association is only nominal: after correcting for ", m_tests, " tests we cannot distinguish it from chance, so we do not reject the null hypothesis.\n")
 } else {
-  cat("Interpretation: The p-value is greater than 0.05. We fail to reject the null hypothesis; there is insufficient statistical evidence to claim this variant influences disease risk.\n")
+  cat("Interpretation: The p-value is above 0.05. We fail to reject the null hypothesis; there is insufficient statistical evidence of association for this variant.\n")
 }
 
-# ==========================================
-# 3C. VISUALIZATION AND SUMMARY OF ASSOCIATION RESULTS
-# ==========================================
+
+### 3C. VISUALIZATION AND SUMMARY OF ASSOCIATION RESULTS
 
 # Remove NA p-values prior to plotting
 valid_p_vals <- chisq_results$p_value[!is.na(chisq_results$p_value)]
 log10_p <- -log10(valid_p_vals)
 
-# Plot -log10(p-values) across all tested variants (Manhattan-style plot)
-plot(log10_p, 
-     pch = 20, 
-     col = "steelblue", 
-     main = "Genome-Wide Association Testing (-log10 P-values)", 
-     xlab = "Tested Variant Index", 
-     ylab = expression(-log[10](p-value)))
+#Bonferroni threshold 
+num_tests <- sum(!is.na(chisq_results$p_value))
+decision_threshold <- 0.05 / num_tests
 
-# Add suggestive significance thresholds (e.g., standard p = 0.05 and Bonferroni threshold)
-abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2) # Nominal significance
-bonferroni_thresh <- 0.05 / length(valid_p_vals)
-abline(h = -log10(bonferroni_thresh), col = "red", lty = 2, lwd = 2) # Genome-wide threshold
+# Quality Score Plot: -log10(p-values) is evaluated across all tested variants.
+# The plot has index that represents each individual SNP tested ordered by position on the x-axis, while on the y-axis is represented the strenght of the statistical association.
+# An orange line was plot at -log10(alpha = 0.05) to underline the cutoff between the significant and the not significant variants considering the significance threshold at 0.05. 
+# The red dashed line represents the Bonferroni threshold (alpha / number of SNPs)
+
+plot(log10_p,
+     pch = 20,
+     col = "steelblue",
+     main = "Chromosome 10: -log10 P-values of all tested variants",
+     xlab = "Tested Variant Index (ordered by position)",
+     ylab = expression(-log[10](p-value)),
+     ylim = c(0, max(log10_p, -log10(decision_threshold)) + 0.5))
+
+# Significant threshold lines added to the plot:
+
+# 1. Nominal threshold at p = 0.05
+abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2)
+
+# 2. Bonferroni threshold
+abline(h = -log10(decision_threshold), col = "red", lty = 2, lwd = 2) 
+
+# 3. FDR (Benjamini-Hochberg) threshold evaluation
+# Extract valid raw p-values
+raw_p <- chisq_results$p_value[!is.na(chisq_results$p_value)]
+
+# Compute adjusted p-values using the Benjamini-Hochberg (FDR) method
+fdr_p <- p.adjust(raw_p, method = "BH")
+
+# Find the maximum raw p-value among markers passing FDR <= 0.05
+significant_fdr_p <- raw_p[fdr_p <= 0.05]
+
+if (length(significant_fdr_p) > 0) {
+  fdr_threshold <- max(significant_fdr_p)
+  cat(sprintf("Raw p-value threshold for FDR (q <= 0.05): %.4e (-log10 = %.2f)\n", 
+              fdr_threshold, -log10(fdr_threshold)))
+  abline(h = -log10(fdr_threshold), col = "blue", lty = 2, lwd = 2)
+
+} else {
+  fdr_threshold <- NA
+  cat("No SNPs exceeded the FDR threshold (q <= 0.05).\n")
+}
+
+
+# NOTE ON THE PLOT: ABSENCE of the FDR LINE
+# Unlike the Bonferroni threshold—which is a fixed theoretical value (alpha / m) calculated prior to observing the distribution of test statistics, the Benjamini-Hochberg FDR threshold is data-dependent. An empirical cutoff line exists only if at least one variant achieves an adjusted q-value <= 0.05.In our dataset, no SNP reached statistical significance under the 5% FDR control (in fact length(significant_fdr_p) == 0). Consequently, the conditional plotting statement if (!is.na(fdr_threshold)) is skipped. This behavior is statistically correct and demonstrates robust handling of null findings: rather than drawing an arbitrary line, the plot reflects the reality that no variants met the empirical threshold required for false discovery rate control.
+
+# After looking to the plot we can consider 2 future pathways:
+# if we want the absolute safest, most conservative guard against false positives and need a simple and universally accepted threshold, we can use Bonferroni threshold. On the other hand we can choose to use FDR (Benjamini-Hochberg) if our dataset has high linkage disequilibrium and we want to maximize your statistical power to find true associations without being overly penalized by the sheer number of tests.
 
 
 
-###################### NOTE FOR THE FUTURE ###############################
-#Summary Recommendation
-#Use Bonferroni if you want the absolute safest, most conservative guard against false positives and need a simple, universally accepted threshold.
 
-#Use FDR (Benjamini-Hochberg) if your dataset has high linkage disequilibrium and you want to maximize your statistical power to find true associations without being overly penalized by the sheer number of tests.
-##########################################################################
+# !! TO DO: COMMENT on 3C steps!!
+
+
+
+
+
+
 
 
 
@@ -445,10 +536,14 @@ abline(h = -log10(bonferroni_thresh), col = "red", lty = 2, lwd = 2) # Genome-wi
 # 3D. MULTIPLE TESTING CORRECTION & RESULTS TABLE
 # ==========================================
 
+# Get the genomic positions (matched by SNP identifier)
+variants <- read.delim("variants.tsv", header = TRUE,
+                       stringsAsFactors = FALSE, check.names = FALSE)
+
 # Report number of tests and method
 num_tests <- sum(!is.na(chisq_results$p_value))
 cat("\n=== Multiple Testing Summary ===\n")
-cat("Family of hypotheses: Testing all retained independent SNPs for association with disease phenotype.\n")
+cat("Family of hypotheses: Testing all variants retained after QC for association with disease phenotype (SNPs are correlated through LD, so Bonferroni is conservative).\n")
 cat("Error criterion controlled: Family-Wise Error Rate (FWER).\n")
 cat("Method: Bonferroni correction.\n")
 cat("Number of tests (m):", num_tests, "\n")
@@ -464,51 +559,81 @@ passing_variants <- sum(adjusted_p <= 0.05, na.rm = TRUE)
 cat("Number of variants passing Bonferroni correction (adjusted p <= 0.05):", passing_variants, "\n")
 
 # Build the comprehensive results table
-# Extracting SNP identifiers and metadata from study_clean
 snp_ids <- colnames(genotypes_clean)
-# Assuming positions are embedded in names or you can provide a position vector. 
-# Here we simulate or extract genomic positions along chromosome 10 (e.g., assuming 1 to length or actual base pairs)
-snp_positions <- seq_len(ncol(genotypes_clean)) * 1000 # Replace with actual base pair positions if available
+# Real positions on chromosome 10, matched by SNP identifier
+snp_positions <- variants$position[match(snp_ids, variants$snp_id)]
+stopifnot(!anyNA(snp_positions))
 
 # Compute sample size and allele frequency for each variant
 sample_sizes <- apply(genotypes_clean, 2, function(x) sum(!is.na(x) & !is.na(phenotype)))
 allele_freqs <- colMeans(genotypes_clean, na.rm = TRUE) / 2
 
 # Status column for failed/untestable analyses
-analysis_status <- ifelse(is.na(raw_p), "Failed/Untestable", "Success")
+analysis_status <- ifelse(is.na(raw_p), "Failed/Untestable",
+                   ifelse(chisq_results$min_expected < 5,
+                          "Warning: expected count < 5 (approximation less reliable)",
+                          "Success"))
+
+# Test used for all variants (degrees of freedom reported in the DF column)
+test_model <- "Pearson chi-squared"
 
 results_table <- data.frame(
   SNP_ID = snp_ids,
   Position = snp_positions,
   Sample_Size = sample_sizes,
   Allele_Frequency = round(allele_freqs, 4),
-  Test_Model = "Pearson Chi-squared (2 df)",
+  Test_Model = test_model,
+  DF = chisq_results$df,
   Raw_P_Value = raw_p,
   Adjusted_P_Value = adjusted_p,
   Status = analysis_status,
-  stringsAsFactors = FALSE
+  stringsAsFactors = FALSE,
+  row.names = NULL
 )
 
-# Preview the top of the results table
-cat("\n=== Preview of Results Table ===\n")
-print(head(results_table, 10))
+# Preview of the 10 variants with the smallest raw p-value
+cat("\n=== Preview of Results Table (smallest p-values) ===\n")
+print(head(results_table[order(results_table$Raw_P_Value), ], 10))
 
+# No effect estimate with the chi-squared test, so genotype counts by phenotype
+# are reported for the 5 variants with the smallest p-values
+cat("\n=== Genotype counts by phenotype (5 smallest p-values) ===\n")
+for (k in order(raw_p)[1:5]) {
+  cat("\n", snp_ids[k], "\n")
+  print(table(Phenotype = phenotype, Genotype = genotypes_clean[, k]))
+}
 
 # ==========================================
 # 3E. CHROMOSOME 10 GENOMIC POSITION PLOT
 # ==========================================
 
+# y-axis limit computed so that the Bonferroni line is always visible
+# (the highest point is below the threshold when no variant is significant)
+y_max <- max(-log10(decision_threshold),
+             -log10(results_table$Raw_P_Value), na.rm = TRUE) + 0.5
+
 # Plot -log10(p) against genomic position along chromosome 10
-plot(results_table$Position, -log10(results_table$Raw_P_Value),
+# Position shown in megabases (Mb) instead of base pairs
+plot(results_table$Position / 1e6, -log10(results_table$Raw_P_Value),
      pch = 20,
      col = "darkgreen",
      main = "Chromosome 10 Association Scan (-log10 P-values)",
-     xlab = "Genomic Position on Chromosome 10 (bp)",
-     ylab = expression(-log[10](p-value)))
+     xlab = "Genomic Position on Chromosome 10 (Mb)",
+     ylab = expression(-log[10](p-value)),
+     ylim = c(0, y_max))
 
 # Add Bonferroni threshold line
-abline(h = -log10(0.05), col = "yellow", lty = 2, lwd = 2)        # Nominal threshold
+abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2)        # Nominal threshold
 abline(h = -log10(decision_threshold), col = "red", lty = 2, lwd = 2) # Bonferroni threshold
+
+# Highlight the variant with the smallest p-value (used later for the LD region)
+top_idx <- which.min(results_table$Raw_P_Value)
+points(results_table$Position[top_idx] / 1e6, -log10(results_table$Raw_P_Value[top_idx]),
+       pch = 1, cex = 2, col = "black")
+
+# Legend
+legend("topright", bty = "n", lty = 2, lwd = 2, col = c("orange", "red"),
+       legend = c("Nominal p = 0.05", "Bonferroni threshold"))
 ```
 
 # WRITTEN SUMMARY AND INTERPRETATION OF ASSOCIATION RESULTS:
@@ -541,6 +666,10 @@ Control for multiple testing and state the family of hypotheses and error criter
 Produce a results table with SNP identifier, position, sample size, allele frequency, test/model, raw and adjusted p-values, and status for failed or untestable analyses. Report effect estimates and uncertainty where your method supports them; otherwise provide genotype counts by phenotype for the variants discussed.
 
 Plot −log10(p) against genomic position along chromosome 10. Explain what the plots show. Report how many variants pass your chosen multiple-testing criterion. Do not change the method to obtain a significant result.
+
+#new 2
+
+The genome-wide association scan successfully evaluated all retained variants, calculating a strict Bonferroni decision threshold of 2.05e-06 (alpha = 0.05 / 24,350 tests) to control for multiple testing. The resulting Manhattan plot maps the -log10(p-values) against their genomic positions, featuring an orange line for nominal significance (p < 0.05) and a red line for the aggressive Bonferroni threshold; an empirical FDR line was intentionally omitted by the algorithm because no variants achieved an adjusted q-value ≤ 0.05. As visualized in the plot and confirmed by our results table, zero variants passed our chosen multiple-testing criterion. The top-associated SNP (highlighted on the plot) shows only nominal significance, meaning that after correcting for the sheer volume of tests, its signal cannot be statistically distinguished from random chance. Because the Chi-squared test does not yield an effect estimate (like an odds ratio), we provided the raw genotype-by-phenotype counts for the top five variants to illustrate their distributions. Ultimately, we fail to reject the null hypothesis, concluding there is no robust evidence of association on chromosome 10. These results are associative, not causal, and the lack of significant findings is likely explained by the limited statistical power of our restricted sample size, the isolation of a single chromosome, and the inability of a basic Chi-squared test to adjust for underlying clinical covariates or population structure.
 
 # 4. Use LD to interpret a region
 
