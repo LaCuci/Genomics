@@ -637,15 +637,176 @@ Present one informative local plot or table relating association evidence, genom
 
 **Questions to answer:** Do nearby associated SNPs necessarily represent independent effects? Does the SNP with the smallest p-value have to be causal? Why is LD pruning for a PCA a different decision from removing correlated variants before association testing?
 
-```{r message = FALSE}
+```{r message = FALSE, results='hold', warning=FALSE}
 
-# WRITE YOUR CODE HERE 
-# AND COMMENT TO THE CODE AND TO THE RESULTS OUTSIDE OF THIS BOX
+# Select an SNP and a region
+# Keep successfully tested SNPs (Changed Raw_P_Value to Raw_P)
+valid_results <- results_table[
+  results_table$Status == "Success" &
+    is.finite(results_table$Raw_P),
+  ,
+  drop = FALSE
+]
+
+# Select the SNP with the smallest raw p-value (Changed Raw_P_Value to Raw_P)
+lead_snp <- valid_results[
+  which.min(valid_results$Raw_P),
+  ,
+  drop = FALSE
+]
+
+# Changed Raw_P_Value to Raw_P
+lead_snp[, c("SNP_ID", "Position", "Raw_P")]
+#Here, "lead SNP" refers to the strongest signal in our analysis.
+
+
+# Define the region: 500 kb on each side
+window_bp <- 500000
+
+region_start <- max(1, lead_snp$Position - window_bp)
+region_end <- lead_snp$Position + window_bp
+
+# Select tested SNPs inside this region
+# (Removed the Chromosome check since all data is on Chromosome 10 anyway)
+region_results <- valid_results[
+    valid_results$Position >= region_start &
+    valid_results$Position <= region_end,
+  ,
+  drop = FALSE
+]
+
+# Sort SNPs by genomic position
+region_results <- region_results[
+  order(region_results$Position),
+  ,
+  drop = FALSE
+]
+
+nrow(region_results)
   
-  
-  
+# Select controls and SNPs from the chosen region
+is_control <- phenotype == 0
+
+region_genotypes <- genotypes_clean[
+  is_control,
+  region_results$SNP_ID,
+  drop = FALSE
+]
+
+# Extract the lead SNP genotypes
+lead_genotype <- region_genotypes[[lead_snp$SNP_ID]]
+
+dim(region_genotypes)
+
+# Prepare result columns
+region_results$LD_r2 <- NA_real_
+region_results$LD_n <- 0L
+region_results$LD_status <- "Not calculated"
+
+#Calculate LD for each SNP
+for (i in seq_len(ncol(region_genotypes))) {
+
+  other_genotype <- region_genotypes[[i]]
+
+  complete_pair <- !is.na(lead_genotype) &
+                   !is.na(other_genotype)
+
+  region_results$LD_n[i] <- sum(complete_pair)
+
+  if (sum(complete_pair) < 3) {
+    region_results$LD_status[i] <- "Too few observations"
+    next
+  }
+
+  x <- lead_genotype[complete_pair]
+  y <- other_genotype[complete_pair]
+
+  if (var(x) == 0 || var(y) == 0) {
+    region_results$LD_status[i] <- "Zero variance"
+    next
+  }
+
+  region_results$LD_r2[i] <- cor(x, y)^2
+  region_results$LD_status[i] <- "Calculated"
+}
+
+#check results
+table(region_results$LD_status)
+
+range(region_results$LD_n)
+
+region_results[
+  order(region_results$LD_r2, decreasing = TRUE),
+  c("SNP_ID", "Position", "LD_r2", "LD_n")
+][1:6, ]
+
+
+#A plot combining SNP position, strength of association, and LD with the lead SNP
+# Assign colours according to LD with the lead SNP
+point_colours <- rep("grey85", nrow(region_results))
+
+known_ld <- !is.na(region_results$LD_r2)
+
+point_colours[known_ld] <- "grey50"
+
+point_colours[
+  known_ld & region_results$LD_r2 >= 0.2
+] <- "orange"
+
+point_colours[
+  known_ld & region_results$LD_r2 >= 0.8
+] <- "red"
+
+# Convert p-values to plot heights (Changed Raw_P_Value to Raw_P)
+association_height <- -log10(region_results$Raw_P)
+
+# Include the Bonferroni threshold in the plotting range
+bonf_height <- -log10(decision_threshold)
+y_upper <- max(c(association_height, bonf_height)) + 0.8
+
+# Plot association evidence and LD
+plot(
+  region_results$Position / 1e6,
+  association_height,
+  pch = 19,
+  col = point_colours,
+  ylim = c(0, y_upper),
+  xlab = "Position on chromosome 10 (Mb)",
+  ylab = expression(-log[10](p)),
+  main = paste("Region around", lead_snp$SNP_ID)
+)
+
+# Show the primary multiple-testing threshold
+abline(h = bonf_height, col = "red", lty = 2)
+
+# Highlight the lead SNP (Changed Raw_P_Value to Raw_P)
+points(
+  lead_snp$Position / 1e6,
+  -log10(lead_snp$Raw_P),
+  pch = 18,
+  col = "purple",
+  cex = 1.5
+)
+
+legend(
+  "topright",
+  legend = c(
+    "LD r² < 0.2",
+    "0.2 ≤ LD r² < 0.8",
+    "LD r² ≥ 0.8",
+    "LD unavailable",
+    "Lead SNP",
+    "Bonferroni threshold"
+  ),
+  col = c("grey50", "orange", "red", "grey85", "purple", "red"),
+  pch = c(19, 19, 19, 19, 18, NA),
+  lty = c(NA, NA, NA, NA, NA, 2),
+  cex = 0.7,
+  bg = "white"
+)
 
 ```
+
 
 
 # 5. Assess robustness
@@ -654,6 +815,108 @@ Choose one scientifically motivated sensitivity analysis, such as changing a QC 
 
 
 **Decision to explain:** Which conclusions remain stable, which change, and what explains the change?
+
+# Explanation of our robustness assessment
+
+For our sensitivity analysis, we decided to investigate whether our strict 5% Minor Allele Frequency (MAF) threshold prematurely discarded variants that were actually associated with the disease. 
+To assess this, we bypassed the MAF filter, effectively evaluating all variants that passed the initial missingness QC.
+However, testing rare variants mathematically guarantees sparse contingency tables with expected cell counts near zero. Under these conditions, the standard Chi-squared test becomes invalid. 
+Therefore, we implement a dynamic approach that calculates expected counts prior to testing, automatically utilizing a Monte Carlo simulated Chi-squared test whenever the minimum expected count falls below 5.
+
+```{r message = FALSE, results='hold', warning=FALSE}
+# ==========================================
+# 5. SENSITIVITY ANALYSIS: RARE VARIANTS & MONTE CARLO SIMULATION
+# ==========================================
+
+# 1. Isolate the variants that passed missingness but were discarded by the MAF < 5% filter
+rare_snps_idx <- pass_snp_miss & !pass_maf
+genotypes_rare <- study_data[, c(FALSE, FALSE, rare_snps_idx)]
+
+cat("Testing", ncol(genotypes_rare), "rare variants excluded in the primary analysis.\n")
+
+# 2. Recycle the dynamic simulation-based statistical engine
+set.seed(20261031)
+mc_replicates <- 10000L 
+
+test_snp_chisq_sim <- function(snp_vector) {
+  valid_idx <- !is.na(snp_vector) & !is.na(phenotype)
+  g <- snp_vector[valid_idx]
+  y <- phenotype[valid_idx]
+  
+  # Pre-allocate a detailed results tracking row
+  result <- data.frame(
+    Sample_Size = length(g),
+    Test_Model = NA_character_,
+    Statistic = NA_real_,
+    Min_Expected = NA_real_,
+    Raw_P_Value = NA_real_,
+    Status = "Untestable",
+    stringsAsFactors = FALSE
+  )
+  
+  # Defensive programming: Catch monomorphic rare variants before they crash the test
+  if (length(unique(g)) < 2 || length(unique(y)) < 2) {
+    result$Status <- "Failed - No variation"
+    return(result)
+  }
+  
+  tbl <- table(g, y)
+  
+  # Calculate expected counts mathematically before running the test
+  expected <- outer(rowSums(tbl), colSums(tbl)) / sum(tbl)
+  result$Min_Expected <- min(expected)
+  
+  # Switch model based on table sparsity
+  use_simulation <- any(expected < 5)
+  result$Test_Model <- if (use_simulation) "Monte Carlo" else "Asymptotic"
+  
+  # tryCatch block to prevent unforeseen errors in sparse tables from halting the loop
+  fit <- tryCatch(
+    if (use_simulation) {
+      suppressWarnings(chisq.test(tbl, simulate.p.value = TRUE, B = mc_replicates))
+    } else {
+      suppressWarnings(chisq.test(tbl, correct = FALSE))
+    },
+    error = function(e) e
+  )
+  
+  if (inherits(fit, "error")) {
+    result$Status <- "Failed"
+    return(result)
+  }
+  
+  result$Statistic <- unname(fit$statistic)
+  result$Raw_P_Value <- fit$p.value
+  result$Status <- "Success"
+  
+  return(result)
+}
+
+# 3. Run the loop over the rare variants
+rare_results_list <- vector("list", ncol(genotypes_rare))
+for (i in seq_len(ncol(genotypes_rare))) {
+  rare_results_list[[i]] <- test_snp_chisq_sim(genotypes_rare[[i]])
+}
+rare_results <- do.call(rbind, rare_results_list)
+rare_results$SNP_ID <- colnames(genotypes_rare)
+
+# 4. Re-evaluate the Multiple Testing penalty
+# Total tests = Primary analysis variants + Rare variants (all that passed missingness)
+m_total <- sum(pass_snp_miss) 
+new_bonf_threshold <- 0.05 / m_total
+
+cat("\n=== Sensitivity Analysis Results ===\n")
+cat("Original Bonferroni threshold (m = 24350):", 0.05 / sum(pass_snp), "\n")
+cat("New strict Bonferroni threshold (m =", m_total, "):", new_bonf_threshold, "\n")
+
+# Check if any rare variant passed the new threshold
+significant_rare <- sum(rare_results$Raw_P_Value <= new_bonf_threshold, na.rm = TRUE)
+cat("Rare variants passing the strict Bonferroni threshold:", significant_rare, "\n")
+
+# Print a summary of the models required to handle the sparse data
+cat("\nModels dynamically deployed for rare variants:\n")
+print(table(rare_results$Test_Model, useNA = "ifany"))
+```
 
 # 6. Conclude and submit
 
