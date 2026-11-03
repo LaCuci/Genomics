@@ -519,9 +519,9 @@ if (length(significant_fdr_p) > 0) {
 }
 
 
-# ==========================================
-# 3D. MULTIPLE TESTING CORRECTION & RESULTS TABLE
-# ==========================================
+
+### 3D. MULTIPLE TESTING CORRECTION & RESULTS TABLE
+
 
 # Get the genomic positions (matched by SNP identifier)
 variants <- read.delim("variants.tsv", header = TRUE,
@@ -584,9 +584,9 @@ for (k in order(raw_p)[1:5]) {
 }
 
 
-# ==========================================
-# 3E. CHROMOSOME 10 GENOMIC POSITION PLOT
-# ==========================================
+
+### 3E. CHROMOSOME 10 GENOMIC POSITION PLOT
+
 
 # y-axis limit computed so that the Bonferroni line is always visible
 y_max <- max(-log10(decision_threshold),
