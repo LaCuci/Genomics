@@ -640,10 +640,10 @@ Present one informative local plot or table relating association evidence, genom
 ```{r message = FALSE, results='hold', warning=FALSE}
 
 # Select an SNP and a region
-# Keep successfully tested SNPs (Changed Raw_P_Value to Raw_P)
+# Keep every SNP with a valid p-value, including those flagged
+# "Warning: Exp < 5" 
 valid_results <- results_table[
-  results_table$Status == "Success" &
-    is.finite(results_table$Raw_P),
+  is.finite(results_table$Raw_P),
   ,
   drop = FALSE
 ]
@@ -683,6 +683,9 @@ region_results <- region_results[
 ]
 
 nrow(region_results)
+
+# How many SNPs in the region have a reliable test and how many are flagged
+table(region_results$Status)
   
 # Select controls and SNPs from the chosen region
 is_control <- phenotype == 0
@@ -834,88 +837,67 @@ genotypes_rare <- study_data[, c(FALSE, FALSE, rare_snps_idx)]
 
 cat("Testing", ncol(genotypes_rare), "rare variants excluded in the primary analysis.\n")
 
-# 2. Recycle the dynamic simulation-based statistical engine
-set.seed(20261031)
-mc_replicates <- 10000L 
-
-test_snp_chisq_sim <- function(snp_vector) {
+# 2. Fast asymptotic screening on rare variants
+# The function returns the p-value AND the smallest expected count,
+# so that we can say how many tests are unreliable (sparse tables)
+test_rare_asympt <- function(snp_vector) {
   valid_idx <- !is.na(snp_vector) & !is.na(phenotype)
-  g <- snp_vector[valid_idx]
-  y <- phenotype[valid_idx]
-  
-  # Pre-allocate a detailed results tracking row
-  result <- data.frame(
-    Sample_Size = length(g),
-    Test_Model = NA_character_,
-    Statistic = NA_real_,
-    Min_Expected = NA_real_,
-    Raw_P_Value = NA_real_,
-    Status = "Untestable",
-    stringsAsFactors = FALSE
-  )
-  
-  # Defensive programming: Catch monomorphic rare variants before they crash the test
-  if (length(unique(g)) < 2 || length(unique(y)) < 2) {
-    result$Status <- "Failed - No variation"
-    return(result)
+  s <- snp_vector[valid_idx]
+  p <- phenotype[valid_idx]
+  if (length(unique(s)) <= 1 || length(unique(p)) <= 1) {
+    return(c(p_value = NA, min_expected = NA))
   }
-  
-  tbl <- table(g, y)
-  
-  # Calculate expected counts mathematically before running the test
-  expected <- outer(rowSums(tbl), colSums(tbl)) / sum(tbl)
-  result$Min_Expected <- min(expected)
-  
-  # Switch model based on table sparsity
-  use_simulation <- any(expected < 5)
-  result$Test_Model <- if (use_simulation) "Monte Carlo" else "Asymptotic"
-  
-  # tryCatch block to prevent unforeseen errors in sparse tables from halting the loop
-  fit <- tryCatch(
-    if (use_simulation) {
-      suppressWarnings(chisq.test(tbl, simulate.p.value = TRUE, B = mc_replicates))
-    } else {
-      suppressWarnings(chisq.test(tbl, correct = FALSE))
-    },
-    error = function(e) e
-  )
-  
-  if (inherits(fit, "error")) {
-    result$Status <- "Failed"
-    return(result)
-  }
-  
-  result$Statistic <- unname(fit$statistic)
-  result$Raw_P_Value <- fit$p.value
-  result$Status <- "Success"
-  
-  return(result)
+  tbl <- table(s, p)
+  fit <- suppressWarnings(chisq.test(tbl, correct = FALSE))
+  c(p_value = fit$p.value, min_expected = min(fit$expected))
 }
 
-# 3. Run the loop over the rare variants
-rare_results_list <- vector("list", ncol(genotypes_rare))
-for (i in seq_len(ncol(genotypes_rare))) {
-  rare_results_list[[i]] <- test_snp_chisq_sim(genotypes_rare[[i]])
-}
-rare_results <- do.call(rbind, rare_results_list)
-rare_results$SNP_ID <- colnames(genotypes_rare)
+rare_out <- t(sapply(genotypes_rare, test_rare_asympt))
+rare_p_vals <- rare_out[, "p_value"]
+rare_min_exp <- rare_out[, "min_expected"]
 
-# 4. Re-evaluate the Multiple Testing penalty
-# Total tests = Primary analysis variants + Rare variants (all that passed missingness)
-m_total <- sum(pass_snp_miss) 
+# How reliable is the screening?
+cat("Rare variants tested:", sum(!is.na(rare_p_vals)), "\n")
+cat("Rare variants not testable (no variation):", sum(is.na(rare_p_vals)), "\n")
+cat("Tests with a minimum expected count < 5 (asymptotic p-value not reliable):",
+    sum(rare_min_exp < 5, na.rm = TRUE), "\n")
+
+# 3. Update the Multiple Testing penalty for the full set
+m_total <- sum(pass_snp_miss)  # primary variants + rare variants
 new_bonf_threshold <- 0.05 / m_total
 
 cat("\n=== Sensitivity Analysis Results ===\n")
-cat("Original Bonferroni threshold (m = 24350):", 0.05 / sum(pass_snp), "\n")
+cat("Original Bonferroni threshold (m =", sum(pass_snp), "):", 0.05 / sum(pass_snp), "\n")
 cat("New strict Bonferroni threshold (m =", m_total, "):", new_bonf_threshold, "\n")
 
-# Check if any rare variant passed the new threshold
-significant_rare <- sum(rare_results$Raw_P_Value <= new_bonf_threshold, na.rm = TRUE)
-cat("Rare variants passing the strict Bonferroni threshold:", significant_rare, "\n")
+# Check if any rare variant passes the Bonferroni threshold
+sig_rare_count <- sum(rare_p_vals <= new_bonf_threshold, na.rm = TRUE)
+cat("Rare variants passing new Bonferroni threshold:", sig_rare_count, "\n")
+cat("Smallest asymptotic p-value among rare variants:",
+    signif(min(rare_p_vals, na.rm = TRUE), 3), "\n")
 
-# Print a summary of the models required to handle the sparse data
-cat("\nModels dynamically deployed for rare variants:\n")
-print(table(rare_results$Test_Model, useNA = "ifany"))
+# The primary result is compared with the new threshold too
+cat("Primary analysis: smallest raw p-value", signif(min(results_table$Raw_P, na.rm = TRUE), 3),
+    "vs new threshold", signif(new_bonf_threshold, 3), "\n")
+
+# 4. Monte Carlo simulation ONLY for nominally significant rare variants (p < 0.05)
+# It is a reliability check of the smallest p-values, not a test that can confirm
+# Bonferroni significance (with B = 2000 the smallest possible p-value is 1/2001,
+# about 5e-4, larger than the threshold)
+nominally_sig_rare <- which(rare_p_vals < 0.05)
+cat("Rare variants requiring Monte Carlo verification (p < 0.05):", length(nominally_sig_rare), "\n")
+
+if (length(nominally_sig_rare) > 0) {
+  set.seed(20261031)
+  mc_p_vals <- numeric(length(nominally_sig_rare))
+  for (j in seq_along(nominally_sig_rare)) {
+    snp_col <- genotypes_rare[[nominally_sig_rare[j]]]
+    valid_idx <- !is.na(snp_col) & !is.na(phenotype)
+    tbl <- table(snp_col[valid_idx], phenotype[valid_idx])
+    mc_p_vals[j] <- chisq.test(tbl, simulate.p.value = TRUE, B = 2000)$p.value
+  }
+  cat("Smallest Monte Carlo p-value among rare variants:", signif(min(mc_p_vals), 3), "\n")
+}
 ```
 
 # 6. Conclude and submit
