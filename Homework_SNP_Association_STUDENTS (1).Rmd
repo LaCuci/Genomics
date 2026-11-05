@@ -257,7 +257,11 @@ pass_snp_miss <- snp_missing <= max_snp_miss
 cat("Variants removed due to missingness (>", max_snp_miss*100, "%):", sum(!pass_snp_miss), "\n")
 
 
-# 3. MAF Analysis & explicit handling of completely empty variants (all NA)
+
+
+### MAF Analysis & explicit handling of completely empty variants (all NA)
+
+
 # A2 is not necessarily the minor allele, so we take the smaller of the two frequencies.
 mean_geno <- colMeans(genotypes, na.rm = TRUE)
 freq_A2 <- mean_geno / 2
@@ -312,11 +316,64 @@ cat("Remaining missing data percentage in clean genotypes:",
     round((sum(is.na(genotypes_clean)) / prod(dim(genotypes_clean))) * 100, 2), "%\n")
 # Comment: After filtering out on the columns the percentage of NAs in the database is decreased from 1% to 0.97%
 
+
+
+### PCA
+
+
+# Handle missing values (NAs) for PCA
+# The PCA algorithm cannot handle missing values directly. 
+# We impute any remaining NAs in the clean genotype matrix 
+# by replacing them with the mean genotype value of each SNP column.
+genotypes_imputed <- apply(genotypes_clean, 2, function(x) {
+  x[is.na(x)] <- mean(x, na.rm = TRUE)
+  return(x)
+})
+
+# Run the Principal Component Analysis (PCA)
+# 'scale. = TRUE' standardizes the variables to have unit variance.
+pca_res <- prcomp(genotypes_imputed, scale. = TRUE)
+
+# Set up layout for multiple plots (1 row, 2 columns)
+par(mfrow = c(1, 2))
+
+# Plot the variance explained (Scree Plot)
+variance_explained <- pca_res$sdev[1:10]^2 / sum(pca_res$sdev^2) * 100
+plot(variance_explained, 
+     type = "b", pch = 19, col = "steelblue",
+     main = "Scree Plot (PCA)", 
+     xlab = "Principal Component", 
+     ylab = "Variance Explained (%)")
+
+# Scatter plot of PC1 vs PC2 to check for population stratification and outliers
+pc_scores <- pca_res$x
+colors_pheno <- ifelse(study_clean$case_control == 1, "salmon", "skyblue")
+
+plot(pc_scores[, 1], pc_scores[, 2], 
+     col = colors_pheno, pch = 20,
+     main = "PCA: PC1 vs PC2", 
+     xlab = paste0("PC1 (", round(summary(pca_res)$importance[2,1]*100, 1), "%)"),
+     ylab = paste0("PC2 (", round(summary(pca_res)$importance[2,2]*100, 1), "%)"))
+
+# Add threshold line or highlight if needed, and a legend
+legend("topright", legend = c("Cases", "Controls"), col = c("salmon", "skyblue"), pch = 20, bty = "n")
+
+# Reset the plotting layout back to the default 1x1 grid
+par(mfrow = c(1, 1))
+
+# Outliers
+# As seen in the scatter plot, a few extreme outlier samples are isolated on the right (PC1 > 50).
+outlier_samples <- pc_scores[, 1] > 50
+cat("Number of genetic outliers detected (PC1 > 50):", sum(outlier_samples), "\n")
+
+
+
 ```
 
 ### Quality Control Results & Filtering Log
 We began with an initial dataset of 494 individuals and 28,501 variants. Our first operation evaluated individual missingness; because a check that removes nothing must be explicitly reported (as exclusions are not a goal in themselves), we note that 0 individuals were excluded, leaving all 494 samples successfully retained.
 Our second operation applied the 2% variant missingness threshold, which removed 803 error-prone variants. Our third operation applied a 5% MAF threshold to the remaining data, which removed an additional 3,348 ultra-rare variants without overlapping or double-counting the previous missingness exclusions.
+At the end, we performed a Principal Component Analysis (PCA) on the genotype matrix to inspect global population structure and identify potential batch effects or artifacts. While the resulting scatter plot revealed a distinct subset of individuals acting as genetic outliers, we deliberately chose not to remove them to avoid unnecessary data loss. Instead, we preserved all 494 samples in our cohort, deciding to account for this underlying population structure by incorporating the leading principal components (e.g., PC1 and PC2) as covariates in our subsequent logistic regression models rather than discarding the data.
 Following these sequential steps, a total of 24,350 variants were successfully retained.
 
 
@@ -369,249 +426,225 @@ Finally, because the standard 2-degree-of-freedom Chi-squared test does not yiel
 #          ASSOCIATION TEST
 # ------------------------------------------
 
-
-### 3A. TEST SNP-PHENOTYPE ASSOCIATIONS (Chi-squared Test)
-
-# The first column of the table is re-named as 'phenotype'
+# Prepare variables and covariates for the association model
+# We define the binary phenotype (0 = Controls, 1 = Cases) from the cleaned dataset.
 phenotype <- study_clean$case_control
 
-# A personalized function is created to test association using the Chi-squared test with 2x3 contingency table
+# We extract the first two principal components (PC1 and PC2) derived from the PCA performed in the QC phase. These will act as covariates in our regression model to control for any underlying population stratification.
+pc1 <- pca_res$x[, 1]
+pc2 <- pca_res$x[, 2]
 
-test_snp_chisq <- function(snp_vector) {
-  # First of all it removes missing values
-  valid_idx <- !is.na(snp_vector) & !is.na(phenotype)
+
+
+### 3A. DEFINE AND APPLY THE LOGISTIC REGRESSION FUNCTION
+
+
+# Purpose: Unlike a simple Chi-squared test, logistic regression allows us to adjust for confounding variables (like PC1 and PC2) while testing each variant.
+test_snp_logistic <- function(snp_vector) {
+  
+  # 1. Filter out missing values (NAs) across all model components simultaneously:
+  #    - SNP genotypes (snp_vector)
+  #    - Disease status / phenotype (phenotype)
+  #    - Population covariates (pc1 and pc2)
+  valid_idx <- !is.na(snp_vector) & !is.na(phenotype) & !is.na(pc1) & !is.na(pc2)
+  
   s <- snp_vector[valid_idx]
   p <- phenotype[valid_idx]
-  n <- length(s)
+  c1 <- pc1[valid_idx]
+  c2 <- pc2[valid_idx]
+  n <- length(s) # Sample size available for this specific test
   
-  # Check for variability in genotypes and phenotype: The following lines check the variability of both variants and individuals. A 3x2 Chi-squared test requires sufficient observations across genotype categories (0, 1, 2) and phenotypic classes (cases/controls). If data are monomorphic or lack variation, the contingency table will    have empty cells or dimensions smaller than 2x2, causing the statistical test to fail or crash the program. Thus, untestable variants safely return NA.
-  
+  # 2. Check for data variability:
+  #    If a variant is monomorphic (all individuals have the same genotype) or if the phenotype lacks variation, the regression model will fail or produce unstable estimates.We safely return NA for such uninformative variants.
   if (length(unique(s)) <= 1 || length(unique(p)) <= 1) {
-    return(c(n = n, statistic = NA, df = NA, min_expected = NA, p_value = NA))
+    return(c(n = n, beta = NA, se = NA, z_val = NA, p_value = NA))
   }
   
-  # Contingency table (Genotype: 0, 1, 2 | Phenotype: Controls 0, Cases 1)
-  tbl <- table(s, p)
+  # 3. Fit the generalized linear model (GLM) using binomial logistic regression -> Formula: logit(P(Disease)) = Intercept + Beta*(SNP) + Beta_PC1*(PC1) + Beta_PC2*(PC2)
+  fit <- tryCatch({
+    model <- glm(p ~ s + c1 + c2, family = binomial)
+    summary_m <- summary(model)
+    
+    # Check if the SNP coefficient ("s") was successfully estimated by the model
+    if ("s" %in% rownames(summary_m$coefficients)) {
+      coef_row <- summary_m$coefficients["s", ]
+      c(n = n, 
+        beta = coef_row["Estimate"],       # Effect size (log-odds change per allele)
+        se = coef_row["Std. Error"],       # Standard error of the beta coefficient
+        z_val = coef_row["z value"],       # Wald test statistic
+        p_value = coef_row["Pr(>|z|)"])    # Association p-value
+    } else {
+      c(n = n, beta = NA, se = NA, z_val = NA, p_value = NA)
+    }
+  }, error = function(e) {
+    # Fallback in case of convergence warnings or unexpected computational errors
+    c(n = n, beta = NA, se = NA, z_val = NA, p_value = NA)
+  })
   
-  # Perform Chi-squared test
-  chisq_res <- suppressWarnings(chisq.test(tbl, correct = FALSE))
-  
-  return(c(n = n, statistic = unname(chisq_res$statistic),
-           df = unname(chisq_res$parameter),
-           min_expected = min(chisq_res$expected),
-           p_value = chisq_res$p.value))
+  return(fit)
 }
 
-# Apply the test to all retained variants
-chisq_results <- t(sapply(as.data.frame(genotypes_clean), test_snp_chisq))
-chisq_results <- as.data.frame(chisq_results)
+# Apply the custom logistic regression function across all columns of the clean genotype matrix
+# 'sapply' iterates over each SNP, and 't()' transposes the resulting matrix for proper orientation.
+log_results <- t(sapply(as.data.frame(genotypes_clean), test_snp_logistic))
+log_results <- as.data.frame(log_results)
 
-cat("\n Chi-squared Association Test \n")
-cat("Variants tested:", sum(!is.na(chisq_results$p_value)), "\n")
-cat("Variants not testable (p-value NA):", sum(is.na(chisq_results$p_value)), "\n")   
-cat("Degrees of freedom of the tests:\n")                                             
-print(table(chisq_results$df, useNA = "ifany"))                                       
-cat("Variants with an expected count < 20 (approximation less reliable):",             
-    sum(chisq_results$min_expected < 20, na.rm = TRUE), "\n")
-# Comparing the number of SNPs in the clean dataset with the successfully tested variants
-# confirms that the Chi-squared test was successfully applied to every retained column,
-# ensuring no SNPs were skipped or lost during the automated screening process.
+# Console feedback summarizing the genome-wide scan execution
+cat("\n=== Logistic Regression Association Test (Adjusted for PC1 & PC2) ===\n")
+cat("Total variants successfully tested:", sum(!is.na(log_results$p_value)), "\n")
+cat("Variants excluded or failed (p-value NA):", sum(is.na(log_results$p_value)), "\n")   
 
 
-### 3B. WORKED EXAMPLE FOR A SINGLE SNP
 
-# We use the SNP with the smallest raw p-value (it is also the starting point of
-# the LD analysis), any other column can be singularly evaluated
-example_col <- which.min(chisq_results$p_value)
+### 3B. WORKED EXAMPLE FOR A SINGLE TOP SNP
+
+
+# Automatically identify the variant with the strongest statistical signal (lowest raw p-value)
+example_col <- which.min(log_results$p_value)
 example_snp_name <- colnames(genotypes_clean)[example_col]
 example_snp_data <- genotypes_clean[, example_col]
 
-cat("\n Worked Example for SNP", example_snp_name, "\n")
+cat("\n Detailed Worked Example for Top SNP:", example_snp_name, "\n")
 
-# A. Contingency table
-obs_table <- table(phenotype, example_snp_data, useNA = "no")
-print("Contingency Table (Rows = Controls 0, Cases 1 | Columns = Genotypes 0, 1, 2):") 
-print(obs_table)
+# Re-run the logistic regression explicitly for this specific SNP to inspect details
+valid_ex <- !is.na(example_snp_data) & !is.na(phenotype) & !is.na(pc1) & !is.na(pc2)
+ex_model <- glm(phenotype[valid_ex] ~ example_snp_data[valid_ex] + pc1[valid_ex] + pc2[valid_ex], family = binomial)
+ex_summary <- summary(ex_model)
 
-# B. Run the Chi-squared test on the single SNP
-ex_chisq <- chisq.test(obs_table, correct = FALSE)
+# Print the full statistical summary of the model (estimates, standard errors, z-values, p-values)
+print(ex_summary)
 
-# Expected counts under H0 (how the data enter the test: observed vs expected
-# counts in each cell; an expected count < 5 means the approximation is less reliable)
-cat("\nExpected counts under H0 (no association):\n")
-print(round(ex_chisq$expected, 1))
+# Extract core metrics for interpretation
+beta_ex <- ex_summary$coefficients["example_snp_data[valid_ex]", "Estimate"]
+se_ex <- ex_summary$coefficients["example_snp_data[valid_ex]", "Std. Error"]
+p_val_ex <- ex_summary$coefficients["example_snp_data[valid_ex]", "Pr(>|z|)"]
 
-# C. Extract and print results
-stat_val <- ex_chisq$statistic
-df_val <- ex_chisq$parameter
-p_val_ex <- ex_chisq$p.value
+cat(sprintf("\nEstimated Allelic Effect (Beta): %.4f\n", beta_ex))
+cat(sprintf("Odds Ratio (exp(Beta)): %.4f\n", exp(beta_ex)))
+cat(sprintf("Statistical Significance (P-value): %.4e\n", p_val_ex))
 
-cat(sprintf("\nChi-squared Statistic: %.4f\n", stat_val))
-cat(sprintf("Degrees of Freedom: %d\n", df_val))
-cat(sprintf("P-value: %.4e\n", p_val_ex))
-cat(sprintf("P-value in the full analysis (3A): %.4e\n", chisq_results$p_value[example_col]))
-
-# D. Authomatization of the output
-# The p-value is nominal (one test out of m) and is compared with the Bonferroni
-# threshold, so that no claim is made without correcting for multiple testing
-m_tests <- sum(!is.na(chisq_results$p_value))
+# Automated Bonferroni multiple testing correction threshold calculation
+m_tests <- sum(!is.na(log_results$p_value))
 bonf_threshold <- 0.05 / m_tests
+decision_threshold <- bonf_threshold
 
+# Conditional logic to interpret the statistical outcome based on multiple testing thresholds
 if (p_val_ex <= bonf_threshold) {
-  cat("Interpretation: The p-value is below the Bonferroni threshold (", format(bonf_threshold, digits = 3), "). We reject the null hypothesis: there is evidence of association between this genotype and disease status (association, not causation).\n")
+  cat("Interpretation: Highly significant! The p-value crosses the strict Bonferroni threshold (", format(bonf_threshold, digits = 3), "). We reject the null hypothesis of no association.\n")
 } else if (p_val_ex < 0.05) {
-  cat("Interpretation: The p-value is below 0.05 but above the Bonferroni threshold (", format(bonf_threshold, digits = 3), "). The association is only nominal: after correcting for ", m_tests, " tests we cannot distinguish it from chance, so we do not reject the null hypothesis.\n")
+  cat("Interpretation: Nominal significance only. The p-value is < 0.05 but above the Bonferroni cutoff (", format(bonf_threshold, digits = 3), "). We cannot rule out false positives due to multiple testing.\n")
 } else {
-  cat("Interpretation: The p-value is above 0.05. We fail to reject the null hypothesis; there is insufficient statistical evidence of association for this variant.\n")
+  cat("Interpretation: Non-significant. The p-value exceeds 0.05; insufficient evidence to reject the null hypothesis.\n")
 }
 
 
-### 3C. VISUALIZATION AND SUMMARY OF ASSOCIATION RESULTS
 
-# Remove NA p-values prior to plotting
-valid_p_vals <- chisq_results$p_value[!is.na(chisq_results$p_value)]
+### 3C. VISUALIZATION: P-VALUE DISTRIBUTION PLOT
+
+
+# Prepare -log10 transformation of valid p-values for plotting strength of association
+valid_p_vals <- log_results$p_value[!is.na(log_results$p_value)]
 log10_p <- -log10(valid_p_vals)
 
-#Bonferroni threshold 
-num_tests <- sum(!is.na(chisq_results$p_value))
-decision_threshold <- 0.05 / num_tests
-
-# Quality Score Plot: -log10(p-values) is evaluated across all tested variants.
-# The plot has index that represents each individual SNP tested ordered by position on the x-axis, while on the y-axis is represented the strenght of the statistical association.
-# An orange line was plot at -log10(alpha = 0.05) to underline the cutoff between the significant and the not significant variants considering the significance threshold at 0.05. 
-# The red dashed line represents the Bonferroni threshold (alpha / number of SNPs)
-
+# Generate scatter plot of -log10(p-values) ordered by variant index
 plot(log10_p,
      pch = 20,
      col = "steelblue",
-     main = "Chromosome 10: -log10 P-values of all tested variants",
-     xlab = "Tested Variant Index (ordered by position)",
+     main = "Chromosome 10: Association Scan (-log10 P-values)",
+     xlab = "Tested Variant Index (Ordered by Position)",
      ylab = expression(-log[10](p-value)),
-     ylim = c(0, max(log10_p, -log10(decision_threshold)) + 0.5))
+     ylim = c(0, max(log10_p, -log10(bonf_threshold)) + 0.5))
 
-# Significant threshold lines added to the plot:
+# Add standard reference threshold lines to the plot:
+abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2)        # Nominal threshold line (alpha = 0.05)
+abline(h = -log10(bonf_threshold), col = "red", lty = 2, lwd = 2)  # Strict Bonferroni threshold line
 
-# 1. Nominal threshold at p = 0.05
-abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2)
-
-# 2. Bonferroni threshold
-abline(h = -log10(decision_threshold), col = "red", lty = 2, lwd = 2) 
-
-# 3. FDR (Benjamini-Hochberg) threshold evaluation
-# Extract valid raw p-values
-raw_p <- chisq_results$p_value[!is.na(chisq_results$p_value)]
-
-# Compute adjusted p-values using the Benjamini-Hochberg (FDR) method
+# Evaluate False Discovery Rate (FDR / Benjamini-Hochberg method) as an alternative threshold
+raw_p <- log_results$p_value[!is.na(log_results$p_value)]
 fdr_p <- p.adjust(raw_p, method = "BH")
-
-# Find the maximum raw p-value among markers passing FDR <= 0.05
 significant_fdr_p <- raw_p[fdr_p <= 0.05]
 
 if (length(significant_fdr_p) > 0) {
   fdr_threshold <- max(significant_fdr_p)
-  cat(sprintf("Raw p-value threshold for FDR (q <= 0.05): %.4e (-log10 = %.2f)\n", 
+  cat(sprintf("FDR Threshold (q <= 0.05) corresponding raw p-value: %.4e (-log10 = %.2f)\n", 
               fdr_threshold, -log10(fdr_threshold)))
-  abline(h = -log10(fdr_threshold), col = "blue", lty = 2, lwd = 2)
-
+  abline(h = -log10(fdr_threshold), col = "blue", lty = 2, lwd = 2) # Blue line for FDR
 } else {
-  fdr_threshold <- NA
-  cat("No SNPs exceeded the FDR threshold (q <= 0.05).\n")
+  cat("No variants met the FDR threshold criteria (q <= 0.05).\n")
 }
 
 
 
-### 3D. MULTIPLE TESTING CORRECTION & RESULTS TABLE
+### 3D. MULTIPLE TESTING SUMMARY & RESULTS TABLE
 
 
-# Get the genomic positions (matched by SNP identifier)
-variants <- read.delim("variants.tsv", header = TRUE,
-                       stringsAsFactors = FALSE, check.names = FALSE)
+# Load genomic annotation data to map variant identifiers to actual chromosomal coordinates
+variants <- read.delim("variants.tsv", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
 
-# Multiple Testing Summary Calculations
-num_tests <- sum(!is.na(chisq_results$p_value))
-raw_p <- chisq_results$p_value
+# Compute adjusted p-values using the Bonferroni correction method controlling Family-Wise Error Rate (FWER)
 adjusted_p <- p.adjust(raw_p, method = "bonferroni")
-decision_threshold <- 0.05 / num_tests
 passing_variants <- sum(adjusted_p <= 0.05, na.rm = TRUE)
 
-# Print clean, concise summary
-cat("\n=== Multiple Testing Summary ===\n")
-cat("Method: Bonferroni correction (controls FWER)\n")
-cat("Number of tests (m):", num_tests, "\n")
-cat(sprintf("Decision threshold (alpha / m): %.2e\n", decision_threshold))
-cat("Variants passing Bonferroni correction:", passing_variants, "\n\n")
+cat("\n=== Multiple Testing Correction Summary ===\n")
+cat("Method: Bonferroni Correction\n")
+cat("Total independent tests (m):", m_tests, "\n")
+cat(sprintf("Significance Threshold (0.05 / m): %.2e\n", bonf_threshold))
+cat("Number of variants passing Bonferroni correction:", passing_variants, "\n\n")
 
-# Build the comprehensive results table
+# Assemble a structured dataframe compiling all key metrics per variant
 snp_ids <- colnames(genotypes_clean)
-# Real positions on chromosome 10, matched by SNP identifier
 snp_positions <- variants$position[match(snp_ids, variants$snp_id)]
 stopifnot(!anyNA(snp_positions))
 
-# Compute sample size and allele frequency for each variant
 sample_sizes <- apply(genotypes_clean, 2, function(x) sum(!is.na(x) & !is.na(phenotype)))
 allele_freqs <- colMeans(genotypes_clean, na.rm = TRUE) / 2
 
-# Shortened status column for cleaner printing
-analysis_status <- ifelse(is.na(raw_p), "Failed",
-                   ifelse(chisq_results$min_expected < 5, "Warning: Exp < 5", "Success"))
-
-# Create data frame with concise column names for readable console/HTML output
 results_table <- data.frame(
   SNP_ID = snp_ids,
   Position = snp_positions,
   N = sample_sizes,
   Freq = round(allele_freqs, 3),
-  DF = chisq_results$df,
-  Raw_P = signif(raw_p, 3),
-  Adj_P = signif(adjusted_p, 3),
-  Status = analysis_status,
+  Beta = signif(log_results$beta, 3),   # Regression coefficient (effect size)
+  SE = signif(log_results$se, 3),       # Standard error
+  Raw_P = signif(raw_p, 3),             # Unadjusted p-value
+  Adj_P = signif(adjusted_p, 3),        # Bonferroni adjusted p-value
+  Status = ifelse(is.na(raw_p), "Failed", "Success"),
   stringsAsFactors = FALSE
 )
 
-# Preview of the 10 variants with the smallest raw p-value
-cat("=== Top 10 Associated Variants ===\n")
-# We drop the row names for a cleaner print layout
+# Display the top 10 most significant variants ranked by raw p-value
+cat("=== Top 10 Associated Variants (Ranked by P-value) ===\n")
 top_10 <- head(results_table[order(results_table$Raw_P), ], 10)
 rownames(top_10) <- NULL
 print(top_10)
 
-# Genotype counts by phenotype for the 5 variants with the smallest p-values
-# (Provided because Chi-squared does not produce an effect estimate)
-cat("\n=== Genotype Counts by Phenotype (Top 5 Variants) ===\n")
-for (k in order(raw_p)[1:5]) {
-  cat("\nVariant:", snp_ids[k], "\n")
-  print(table(Phenotype = phenotype, Genotype = genotypes_clean[, k]))
-}
 
 
+### 3E. GENOMIC POSITION PLOT (MANHATTAN-STYLE SUBSET)
 
-### 3E. CHROMOSOME 10 GENOMIC POSITION PLOT
 
+# Set upper bound limit for y-axis scaling
+y_max <- max(-log10(bonf_threshold), -log10(results_table$Raw_P), na.rm = TRUE) + 0.5
 
-# y-axis limit computed so that the Bonferroni line is always visible
-y_max <- max(-log10(decision_threshold),
-             -log10(results_table$Raw_P), na.rm = TRUE) + 0.5
-
-# Plot -log10(p) against genomic position along chromosome 10
-# Position shown in megabases (Mb) instead of base pairs
+# Plot association p-values against physical genomic position on Chromosome 10 (in Megabases)
 plot(results_table$Position / 1e6, -log10(results_table$Raw_P),
      pch = 20,
      col = "darkgreen",
-     main = "Chromosome 10 Association Scan (-log10 P-values)",
+     main = "Chromosome 10: Genomic Association Scan",
      xlab = "Genomic Position on Chromosome 10 (Mb)",
      ylab = expression(-log[10](p-value)),
      ylim = c(0, y_max))
 
-# Add significance threshold lines
-abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2)        # Nominal threshold
-abline(h = -log10(decision_threshold), col = "red", lty = 2, lwd = 2) # Bonferroni threshold
+# Add reference lines for significance thresholds
+abline(h = -log10(0.05), col = "orange", lty = 2, lwd = 2)        
+abline(h = -log10(bonf_threshold), col = "red", lty = 2, lwd = 2) 
 
-# Highlight the variant with the smallest p-value (used later for the LD region)
+# Highlight the top lead variant (lowest p-value) with a distinct circular marker
 top_idx <- which.min(results_table$Raw_P)
 points(results_table$Position[top_idx] / 1e6, -log10(results_table$Raw_P[top_idx]),
        pch = 1, cex = 2, col = "black")
 
-# Legend
+# Add layout legend
 legend("topright", bty = "n", lty = 2, lwd = 2, col = c("orange", "red"),
        legend = c("Nominal p = 0.05", "Bonferroni threshold"))
 ```
