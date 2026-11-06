@@ -172,32 +172,24 @@ When we consider how sample and variant filtering affect one another, we must ac
 However, because our histograms reveal that individual missingness is uniformly low across the board, we bypass sample exclusions entirely to preserve our dataset. 
 For our variants, we set an automatic exclusion threshold for SNPs with greater than 2% missingness to eliminate error-prone data.
 
-### Check Ancestry and population structure 
 
-Should we perform a PCA analysis to see if there are other factors other than SNPs that are significantly linked to the phenotype? 
-TODO : After LD 
+### Allele frequency control and Hardy-Weinberg Equilibrium
 
-### Allele frequency control 
+We know that our final goal is to apply statistical tests to understand if some SNP positions are correlated to the phenotype (case/control). It is important to have enough samples carrying the genetic variant, otherwise we lack the statistical power to detect true associations and will only inflate our multiple-testing penalty. This is why we filter by Minor Allele Frequency (MAF).
 
-We know that our final goal is to apply statistical tests to understand if some SNP positions are correlated to the phenotype (case/control) 
-It is important to have enough samples in every SNP variant if we want to do a statistical analysis, otherwise the population would be too small compared to the universe of all individuals to actually get statistically relevant results. 
-This is the reason we check the Minor Allele Frequency.
+MAF represents the overall frequency of the less common allele within the dataset. Because every person carries two copies of each SNP, our 494 individuals represent 988 total alleles.
 
-MAF represents the overall frequency of the less common allele within the dataset. Because every person carries two copies of each SNP, our 494 individuals represent 988 total alleles. 
+If a specific SNP has a MAF of 1%, only about 10 minor alleles exist (988 * 1/100) in the entire pool. Hardy-Weinberg Equilibrium (HWE) is a model that helps us understand how those alleles pair up into genotypes. It follows the distribution p^2 + 2pq + q^2 = 1, where p is the frequency of the major allele, and q is the frequency of the minor allele (MAF). 
 
-If a specific SNP has a MAF of 1%, it means the minor allele only appears about 10 times across the entire pool of 988. If we were to test a SNP this rare, we would not have enough individuals carrying the variant to achieve a statistically significant result. This means that about between 5 and 10 people have variant 1 or 2 of the SNP, and we cannot perform a powerful statistical analysis that checks correlation with these individuals, their SNP variant and their phenotype. 
+Because rare alleles randomly pair with common ones, these 10 alleles will almost exclusively appear in heterozygous individuals (genotype 1), leaving the homozygous minor group (genotype 2) entirely empty. Testing such rare SNPs provides no actionable statistical power. Consequently, SNPs with a MAF below our threshold are discarded.
 
-Therefore, if the MAF is too small, we will have too few indivisuals to get a significant statistical result for that SNP and therefore that SNP is not even considered for analysis. 
+We chose a 10% Minor Allele Frequency (MAF) threshold. To justify this choice, we calculate the expected genetic distribution based on our sample size and HWE principles. We previously filtered out SNPs with more than 2% missing values, leaving a minimum of 484 valid individuals (968 alleles).
 
-Therefore, if the MAF is too small, testing the SNP provides no actionable statistical power while unnecessarily increasing our multiple-testing penalty. Consequently, SNPs with a MAF below our threshold are discarded and removed from the association analysis.
+At a 10% MAF (q=0.1), we retain approximately 97 minor alleles (10% of 968) in the test pool. Under HWE distribution, a 10% MAF ensures that roughly 18% (2pq = 2 * 0.9 * 0.1) of our sample (about 87 individuals) will be heterozygous carriers (genotype 1). This provides a highly robust sub-population for our statistical analysis.
 
-We chose 5% Minor Allele Frequency (MAF) threshold. To justify this choice,  we can calculate the worst-case scenario for our statistical power based on our sample size. 
-We previously filtered out SNPs with more than 2% missing values, meaning the maximum number of missing individuals for any retained SNP is approximately 10 (2% of 494). 
-In the worst-case scenario, this leaves 484 valid individuals, contributing a total of 968 alleles to the test pool. 
+However, HWE also dictates that the frequency of the homozygous minor genotype (genotype 2) will be q^2 = 0.01. In a sample of 484 people, this yields about 5 individuals. While splitting these 5 individuals between cases and controls still yields expected cell counts slightly below Cochran’s rule of 5 (approx. 3 per cell), this 10% threshold drastically reduces the severity of the sparse-data problem compared to a lower threshold. 
 
-Applying a 5% MAF threshold to this minimum pool ensures that the minor allele appears at least 48 times (5% of 968). Even if these alleles are entirely concentrated in homozygous individuals (meaning each person carries two copies of the minor variant), this guarantees a minimum of 24 patients representing the minor genotype. 
-
-Because standard statistical models require at least 20 observations in a specific class to be considered robust and reliable, the 5% MAF threshold mathematically guarantees that every variant we test possesses the necessary sample size for a rigorous analysis.
+Therefore, our 10% MAF filter secures our overall statistical power, reduces the multiple-testing penalty, and removes the most mathematically unstable SNPs from the primary analysis. Since we know we are discarding many SNPs, we will evaluate those rare variants separately in Part 5 using Monte Carlo simulations.
 
 ### PCA 
 
@@ -207,125 +199,79 @@ Finally,we will statistically test the top principal components for associations
 From the results we will see if we can proceed with our statistical analysis or if we have to use different methods that hold covariates into account. 
 
 ```{r message = FALSE, results='hold', warning=FALSE}
-# -----------------------------------------------
-#              QUALITY CONTROL 
-# -----------------------------------------------
+# ===============================================
+#               QUALITY CONTROL 
+# ===============================================
 
-# Now we can visualize the distribution of NAs on both rows and column in order to have some more hint on which value could be a good threshold for the following QC.
+# --- 1. Missingness Evaluation ---
 
-# Calculated percentage of missingness (NAs) for each individual and SNP
 row_na_pct <- rowMeans(is.na(genotypes)) * 100
 col_na_pct <- colMeans(is.na(genotypes)) * 100
 
-# Set up the plotting layout to show one figure with two graphs (1 row, 2 columns)
-# they only show the data, they remove nothing
 par(mfrow = c(1, 2))
 
-# Histogram for Individuals (Row Missingness)
-hist(row_na_pct, 
-     breaks = 30, 
-     col = "skyblue", 
-     border = "white",
-     main = "Missingness per Individual", 
-     xlab = "Missing Data (%)", 
-     ylab = "Number of Individuals")
+hist(row_na_pct, breaks = 30, col = "skyblue", border = "white",
+     main = "Missingness per Individual", xlab = "Missing Data (%)", ylab = "Individuals")
 
-# Histogram for Variants (Column Missingness)
-hist(col_na_pct, 
-     breaks = 30, 
-     col = "salmon", 
-     border = "white",
-     main = "Missingness per Variant (SNP)", 
-     xlab = "Missing Data (%)", 
-     ylab = "Number of Variants")
-
-# Add a visual threshold line at 2%
+hist(col_na_pct, breaks = 30, col = "salmon", border = "white",
+     main = "Missingness per Variant (SNP)", xlab = "Missing Data (%)", ylab = "Variants")
 abline(v = 2, col = "red", lwd = 2, lty = 2)
 
-# Reset plotting layout back to default (1x1)
 par(mfrow = c(1, 1))
 
-# Print summary statistics to help justify your chosen threshold
 cat("\n--- Summary of Individual Missingness (%) ---\n")
 print(summary(row_na_pct))
-
 cat("\n--- Summary of Variant Missingness (%) ---\n")
 print(summary(col_na_pct))
 
-# The outputs of this part denote that:
-# 1) Every single individuals has circa 1% of missing values. The minimum and the maximum percentage of NAs in rows are extremely near (0.81-1.16%), so we choose to not set a threshold. We consider as all the samples have passed the basic quality control.
-# 2) On the other hand the variant missingness range is larger (minimum 0% and maximum 3.44%). We should define a threshold. Our decision is to set it at 2% in order to cut off those few variants sitting above 2%.
-
-
-max_snp_miss <- 0.02  # Maximum allowed missingness per SNP (2%)
-
-# Variant missingness evaluation
+# Set 2% threshold for variant missingness; individual missingness is ~1% universally
+max_snp_miss <- 0.02  
 snp_missing <- colMeans(is.na(genotypes))
 pass_snp_miss <- snp_missing <= max_snp_miss
-cat("Variants removed due to missingness (>", max_snp_miss*100, "%):", sum(!pass_snp_miss), "\n")
+cat("\nVariants removed due to missingness (>", max_snp_miss*100, "%):", sum(!pass_snp_miss), "\n")
 
 
+# --- 2. MAF Analysis ---
 
-
-### MAF Analysis & explicit handling of completely empty variants (all NA)
-
-
-# A2 is not necessarily the minor allele, so we take the smaller of the two frequencies.
 mean_geno <- colMeans(genotypes, na.rm = TRUE)
 freq_A2 <- mean_geno / 2
 maf <- pmin(freq_A2, 1 - freq_A2)
 
-# MAF threshold chosen (Moved up so the plot can use it for coloring)
-min_maf <- 0.05  # minimum minor allele frequency (5%)
+# Updated MAF threshold to 10% based on HWE analysis
+min_maf <- 0.10  
 
-# Calculate the histogram data without plotting it yet
 maf_hist <- hist(maf[pass_snp_miss], breaks = 50, plot = FALSE)
-
-# Create a color vector: orange for bars below the threshold, lightgreen for the rest
-# We check if the left edge of each histogram bin is below our 0.05 threshold
 bar_colors <- ifelse(maf_hist$mids < min_maf, "orange", "lightgreen")
 
-# Plot the MAF distribution with the dynamic colors (Diagnostic Flag)
-plot(maf_hist, 
-     col = bar_colors, 
-     border = "white",
+plot(maf_hist, col = bar_colors, border = "white",
      main = "Distribution of Minor Allele Frequency (MAF)", 
-     xlab = "MAF Value", 
-     ylab = "Number of Variants")
-
-# Add the cutoff line and a legend to make it perfectly clear
+     xlab = "MAF Value", ylab = "Number of Variants")
 abline(v = min_maf, col = "red", lwd = 2, lty = 2)
 legend("topright", fill = c("orange", "lightgreen"), 
-       legend = c("Removed (MAF < 5%)", "Retained"), bty = "n", border = "white")
+       legend = c("Removed (MAF < 10%)", "Retained"), bty = "n", border = "white")
 
-# Print MAF summary statistics
-cat("MAF Summary Statistics\n")
+cat("\nMAF Summary Statistics\n")
 print(summary(maf))
 
-# Apply combined variant filters and subset the dataset cleanly at the end
-# (Handling potential NaN values from variants with 0 observations)
 pass_maf <- !is.na(maf) & (maf >= min_maf)
 pass_snp <- pass_snp_miss & pass_maf
 
-cat("Final Variant QC Summary (Filtering Log)")
+
+# --- 3. Final Filtering Execution ---
+
+cat("\n--- Final Variant QC Summary (Filtering Log) ---\n")
 cat("Initial variants:", ncol(genotypes), "\n")
 cat("Variants removed by missingness (> 2%):", sum(!pass_snp_miss), "\n")
-cat("Variants removed by MAF (< 5%):", sum(pass_snp_miss & !pass_maf), "\n")
+cat("Variants removed by MAF (< 10%):", sum(pass_snp_miss & !pass_maf), "\n")
 cat("Total variants successfully retained:", sum(pass_snp), "\n")
 
-# Create the final clean dataset ready for association testing
 study_clean <- study_data[, c(TRUE, TRUE, pass_snp)]
 genotypes_clean <- study_clean[, -(1:2)]
 
-# Repeat relevant summaries after filtering
-cat("Post-Filtering Summary Verification")
+cat("\n--- Post-Filtering Summary Verification ---\n")
 cat("Final dimensions of clean dataset:", dim(genotypes_clean), "\n")
 cat("Remaining missing data percentage in clean genotypes:", 
     round((sum(is.na(genotypes_clean)) / prod(dim(genotypes_clean))) * 100, 2), "%\n")
-# Comment: After filtering out on the columns the percentage of NAs in the database is decreased from 1% to 0.97%
-
-
-
 ### PCA
 
 ### PCA and Outlier Removal
@@ -351,8 +297,8 @@ plot(pc_scores_initial[, 1], pc_scores_initial[, 2],
      ylab = paste0("PC2 (", round(pca_imp_initial[2,2]*100, 1), "%)"))
 legend("topright", legend = c("Cases", "Controls"), col = c("salmon", "skyblue"), pch = 20, bty = "n")
 
-# 4. Identify and remove outliers (PC1 > 50)
-outlier_samples <- pc_scores_initial[, 1] > 50
+# 4. Identify and remove outliers
+outlier_samples <- pc_scores_initial[, 1] < -50
 cat("Number of genetic outliers detected and removed:", sum(outlier_samples), "\n")
 
 genotypes_filtered <- genotypes_imputed[!outlier_samples, ]
@@ -431,18 +377,18 @@ print(round(pc_ttests, 4))
 
 ### Quality Control Results & Filtering Log
 We began with an initial dataset of 494 individuals and 28,501 variants. Our first operation evaluated individual missingness; because a check that removes nothing must be explicitly reported (as exclusions are not a goal in themselves), we note that 0 individuals were excluded, leaving all 494 samples successfully retained.
-Our second operation applied the 2% variant missingness threshold, which removed 803 error-prone variants. Our third operation applied a 5% MAF threshold to the remaining data, which removed an additional 3,348 ultra-rare variants without overlapping or double-counting the previous missingness exclusions.
-At the end, we performed a Principal Component Analysis (PCA) on the genotype matrix to inspect global population structure and identify potential batch effects or artifacts. While the resulting scatter plot revealed a distinct subset of individuals acting as genetic outliers, we deliberately chose not to remove them to avoid unnecessary data loss. Instead, we preserved all 494 samples in our cohort, deciding to account for this underlying population structure by incorporating the leading principal components (e.g., PC1 and PC2) as covariates in our subsequent logistic regression models rather than discarding the data.
-Following these sequential steps, a total of 24,350 variants were successfully retained.
-
+Our second operation applied the 2% variant missingness threshold, which removed 803 error-prone variants. Our third operation applied a 10% MAF threshold to the remaining data, which removed an additional 6,552 rare variants without overlapping or double-counting the previous missingness exclusions.
+At the end, we performed a Principal Component Analysis (PCA) on the genotype matrix to inspect global population structure and identify potential batch effects or artifacts. The resulting scatter plot revealed a distinct subset of 6 individuals acting as genetic outliers. We removed these 6 samples to prevent them from concealing more subtle differences in the main cluster. 
+Following these sequential steps, a total of 488 individuals and 21,146 variants were successfully retained for the association analysis.
 
 ### Considerations and Practical Effects:
-Individual filtering was bypassed as our diagnostic checks confirmed uniform and extremely low missingness (~1%) across all samples, avoiding unnecessary data loss. For the variants, removing those exceeding the 2% missingness threshold eliminated tech-driven errors, while the 5% MAF threshold filtered out ultra-rare alleles that lack statistical power. Together, these steps successfully removed low-quality and uninformative data, reducing the overall dataset dimensions (final dimensions: 494 individuals, 24,350 variants) while improving the global missing data percentage from roughly 1.00% down to 0.97%. This ensures a robust and clean genotype matrix ready for association testing.
+Individual missingness filtering was bypassed as our diagnostic checks confirmed uniform and extremely low missingness (~1%) across all samples, avoiding unnecessary data loss. For the variants, removing those exceeding the 2% missingness threshold eliminated tech-driven errors, while the 10% MAF threshold filtered out rare alleles that lack statistical power and mathematically destabilize our chosen Chi-squared test. Together, these steps successfully removed low-quality and uninformative data, reducing the overall dataset dimensions (final dimensions: 488 individuals, 21,146 variants) while improving the global missing data percentage from roughly 1.00% down to 0.97%. 
 
-### PCA Results and analysis 
-We could see in the first PCA that a small cluster of 6 individuals is separated from the rest of the individuals by a significant margin. We decided to remove these individuals because even if they were few in comparison with the whole sample, they might be concealing more subtle but present differences in the main cluster of individuals. We repeated the analysis and found that no principal component in the first 10 components contains any sign of a particular case/control distribution. In all components, cases and controls appear mixed together, in a single cluster. 
-To validate this visual observation, we performed t-tests comparing the scores of the first 10 principal components between cases and controls. While PC4 showed a nominal association (p = 0.033 < 0.05), it is not statistically significant after applying a Bonferroni correction for the 10 components evaluated (threshold = 0.05*10 = 0.005). 
-Since no principal components significantly differ between cases and controls, we decided that there is no reason to use an analysis method that accounts for covariates, since none were found in the PCA. 
+### PCA Results and Analysis 
+We could see in the first PCA that a small cluster of 6 individuals was separated from the rest of the cohort by a significant margin. We decided to remove these individuals because, even though they were few in comparison to the whole sample, they might be hiding smaller but still significant separations present in the data. 
+We repeated the PCA on the clean dataset and found that no principal component in the first 10 components contains any sign of a particular case/control separation. In all components, cases and controls appear mixed together in a single uniform cluster. 
+To validate this visual observation, we performed t-tests comparing the scores of the first 10 principal components between cases and controls. None of the components showed even a nominal association with the disease status (all p-values > 0.05, with the lowest being PC4 at p = 0.0576). Since no principal components significantly differ between cases and controls, we concluded that there is no reason to use a regression method that accounts for covariates, as no significant population stratification exists within the main cluster.
+
 
 # 3. Test SNP–phenotype associations
 
@@ -732,8 +678,6 @@ points(results_table$Position[top_idx] / 1e6, -log10(results_table$Raw_P[top_idx
 # Legend
 legend("topright", bty = "n", lty = 2, lwd = 2, col = c("orange", "red"),
        legend = c("Nominal p = 0.05", "Bonferroni threshold"))
-```
-
 ```
 
 ### Example insight 
