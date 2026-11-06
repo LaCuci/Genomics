@@ -1579,6 +1579,32 @@ legend(
 ## rs11009339 rs11009339 33648867 0.4626169  222
 ## rs10827235 rs10827235 33652884 0.4220188  225</code></pre>
 </div>
+<div id="comments" class="section level1">
+<h1>Comments</h1>
+<p>This code evaluates the lead SNP—the one with the lowest
+p-value—designating it as the reference. Then, a 1 Mb window centered on
+the lead SNP is defined, and the LD is computed by calculating the
+squared correlation (r^2) between the lead SNP and every other SNP in
+the selected cohort. This value explains how strongly the variants are
+correlated.Finally, an informative regional plot is displayed. It shows
+the physical position on the chromosome on the x-axis, while the
+association strength on the y-axis uses the -log_10(p) scale. Four
+categories of colors are used for the LD: red for strong correlation,
+orange for moderate correlation, dark grey for low correlation, and
+light grey when LD is unavailable. The lead SNP is marked with a purple
+diamond. The Bonferroni threshold distinguishes significant elements
+from non-significant ones.</p>
+<p>We can conclude that nearby associated SNPs do not represent
+independent effects. In fact, as shown in the plot, the
+medium/high-ranking dots near the peak are located close to each other
+in the genome and show local correlation. This shows they aren’t
+independent, they are simply inherited together in the same block of
+DNA. While the lead SNP designates the strongest statistical association
+in the region, it is rarely guaranteed to be the true causal variant.
+Because correlation spans across the local LD block, a group of
+neighboring variants will share similar significance levels, meaning the
+true causal mutation could be any one of them.</p>
+</div>
 <div id="assess-robustness" class="section level1">
 <h1>5. Assess robustness</h1>
 <p>Choose one scientifically motivated sensitivity analysis, such as
