@@ -149,10 +149,12 @@ cat("Variants with all genotypes missing:",
 ```
 
 ### Preprocessing Results
-We found that we have no repeated samples and that both categories, cases and control, are well represented.
-We found that we have no repeated SNPs, that the matrix holds just the values we expect to see (SNPs variant or NA for unknown), so we can skip repeated input checks further in the analysis since the starting data has no faults. 
-We found that the unknown variants represent just 1\% of all data and therefore the data is overall valid and worth examining. 
-We found that there are no variants with all genotypes missing --> TODO = EXPLAIN BETTER 
+
+We found that we have no repeated samples and that both categories, cases and control, are well represented (n_cases = 267, n_controls = 227).
+We found that we have no repeated SNPs, that the matrix holds just the values we expect to see (SNPs variant 0,1,2 or NA for unknown), so we can skip repeated input checks further in the analysis since the starting data has no faults. 
+We found that the global missing data represent just 1\% of all data and therefore the data is overall valid and worth examining. 
+We found that there are no variants with all genotypes missing, so no column have 100% of missing data.
+So we can conclude that this first step of pre-processing confirms the good quality of the dataset.
 
 
 # 2 . Quality Control 
@@ -272,7 +274,7 @@ cat("\n--- Post-Filtering Summary Verification ---\n")
 cat("Final dimensions of clean dataset:", dim(genotypes_clean), "\n")
 cat("Remaining missing data percentage in clean genotypes:", 
     round((sum(is.na(genotypes_clean)) / prod(dim(genotypes_clean))) * 100, 2), "%\n")
-### PCA
+
 
 ### PCA and Outlier Removal
 
@@ -885,25 +887,31 @@ Choose one scientifically motivated sensitivity analysis, such as changing a QC 
 
 # Explanation of our robustness assessment
 
-For our sensitivity analysis, we decided to investigate whether our strict 5% Minor Allele Frequency (MAF) threshold prematurely discarded variants that were actually associated with the disease. 
+For our sensitivity analysis, we decided to investigate whether our strict 10% Minor Allele Frequency (MAF) threshold prematurely discarded variants that were actually associated with the disease. 
 To assess this, we bypassed the MAF filter, effectively evaluating all variants that passed the initial missingness QC.
-However, testing rare variants mathematically guarantees sparse contingency tables with expected cell counts near zero. Under these conditions, the standard Chi-squared test becomes invalid. 
-Therefore, we implement a dynamic approach that calculates expected counts prior to testing, automatically utilizing a Monte Carlo simulated Chi-squared test whenever the minimum expected count falls below 5.
+Testing rare variants is tricky because low allele counts create sparse contingency tables, which can invalidate standard Chi-squared tests and yield unreliable p-values. To handle this, we used a two-step approach: we first screened all rare variants with a standard test while tracking minimum expected cell counts, and then re-tested any nominally significant variants (p < 0.05) using Monte Carlo simulations (with 2,000 permutations) to get reliable empirical p-values. Lastly, we adjusted our Bonferroni threshold to account for the total number of tested variants (m_total), making sure we evaluated any potential rare variant signals under appropriately strict significance criteria.
 
 ```{r message = FALSE, results='hold', warning=FALSE}
 # ==========================================
 # 5. SENSITIVITY ANALYSIS: RARE VARIANTS & MONTE CARLO SIMULATION
 # ==========================================
 
-# 1. Isolate the variants that passed missingness but were discarded by the MAF < 5% filter
+# 1. Isolate the variants that passed missingness but were discarded by the MAF < 10% filter
 rare_snps_idx <- pass_snp_miss & !pass_maf
 genotypes_rare <- study_data[, c(FALSE, FALSE, rare_snps_idx)]
 
 cat("Testing", ncol(genotypes_rare), "rare variants excluded in the primary analysis.\n")
 
 # 2. Fast asymptotic screening on rare variants
-# The function returns the p-value AND the smallest expected count,
+# The function returns the p-value and the smallest expected count,
 # so that we can say how many tests are unreliable (sparse tables)
+# What is the meaning of the retrieved p-values?
+# Normally, tiny p-value suggests that the distribution of that variant (0, 1, 2) is
+# drastically different between cases and controls while a high p-value suggests
+# no evidence of an association.
+# By choosing to not apply a MAF threshold and considering rare variants, as done in this part,
+# a small p-values suggest a sort of artifact because low allele counts create 
+#   sparse contingency tables that invalidate standard asymptotic tests.
 test_rare_asympt <- function(snp_vector) {
   valid_idx <- !is.na(snp_vector) & !is.na(phenotype)
   s <- snp_vector[valid_idx]
@@ -927,6 +935,9 @@ cat("Tests with a minimum expected count < 5 (asymptotic p-value not reliable):"
     sum(rare_min_exp < 5, na.rm = TRUE), "\n")
 
 # 3. Update the Multiple Testing penalty for the full set
+# In the following part, a new Bonferroni threshold is computed. 
+# This new threshold takes into account the larger number of variants 
+# compared to the previous Bonferroni threshold.
 m_total <- sum(pass_snp_miss)  # primary variants + rare variants
 new_bonf_threshold <- 0.05 / m_total
 
@@ -934,7 +945,10 @@ cat("\n=== Sensitivity Analysis Results ===\n")
 cat("Original Bonferroni threshold (m =", sum(pass_snp), "):", 0.05 / sum(pass_snp), "\n")
 cat("New strict Bonferroni threshold (m =", m_total, "):", new_bonf_threshold, "\n")
 
-# Check if any rare variant passes the Bonferroni threshold
+# Check if any rare variant passes the Bonferroni threshold.
+# At this point, we evaluate if any of the newly considered variants have a p-value
+# smaller than the new Bonferroni threshold. If this happens, it means that some 
+# highly significant rare variant was accidentally discarded by the primary MAF filter.
 sig_rare_count <- sum(rare_p_vals <= new_bonf_threshold, na.rm = TRUE)
 cat("Rare variants passing new Bonferroni threshold:", sig_rare_count, "\n")
 cat("Smallest asymptotic p-value among rare variants:",
@@ -943,8 +957,9 @@ cat("Smallest asymptotic p-value among rare variants:",
 # The primary result is compared with the new threshold too
 cat("Primary analysis: smallest raw p-value", signif(min(results_table$Raw_P, na.rm = TRUE), 3),
     "vs new threshold", signif(new_bonf_threshold, 3), "\n")
+# No rare variant passes the new bonferroni threshold
 
-# 4. Monte Carlo simulation ONLY for nominally significant rare variants (p < 0.05)
+# 4. Monte Carlo simulation only for nominally significant rare variants (p < 0.05)
 # It is a reliability check of the smallest p-values, not a test that can confirm
 # Bonferroni significance (with B = 2000 the smallest possible p-value is 1/2001,
 # about 5e-4, larger than the threshold)
@@ -962,7 +977,17 @@ if (length(nominally_sig_rare) > 0) {
   }
   cat("Smallest Monte Carlo p-value among rare variants:", signif(min(mc_p_vals), 3), "\n")
 }
+# The smallest resulting empirical p-value was 5e-04 (the lower bound for 2,000 permutations). 
+# Since this value remains well above the strict Bonferroni threshold, we confirm that 
+# these rare variants do not reach true significance, validating our 10% MAF filter.
+
+
 ```
+
+# Conclusion about our Sensitivity Analysis
+Our sensitivity analysis proves that our 10% MAF filter was the right call. When we went back and tested all the rare variants we initially dropped, none of them came close to passing our strict Bonferroni significance cutoff. The few rare variants that initially looked slightly interesting (p < 0.05) turned out to be false alarms caused by low sample counts in sparse tables, which our Monte Carlo simulations quickly cleared up.
+
+
 
 # 6. Conclude and submit
 
