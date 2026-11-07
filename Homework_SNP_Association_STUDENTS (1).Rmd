@@ -193,10 +193,11 @@ However, HWE also dictates that the frequency of the homozygous minor genotype (
 
 Therefore, our 10% MAF filter secures our overall statistical power, reduces the multiple-testing penalty, and removes the most mathematically unstable SNPs from the primary analysis. Since we know we are discarding many SNPs, we will evaluate those rare variants separately in Part 5 using Monte Carlo simulations.
 
-### PCA 
+### PCA AND LD Pruning 
 
 We do the Principal Components Analysis. Our goal is to look at the scatter plots of each component to find clusterings of cases separated from the controls, or outliers, or a skewed distribution that separates cases from controls in any principal components. 
 Since we can't look at all principal components, we decided to stop at the component that would cover at least 20% of the variance. 
+We apply the PCA on the results of Linkage Disequilibrium pruning, so on the SNPs that are found to be "Ambassadors" of the "regions of SNPs that are inherited together" , so that the PCA was done on components that don't influence eachother. 
 Finally,we will statistically test the top principal components for associations with disease status.
 From the results we will see if we can proceed with our statistical analysis or if we have to use different methods that hold covariates into account. 
 
@@ -276,86 +277,106 @@ cat("Remaining missing data percentage in clean genotypes:",
     round((sum(is.na(genotypes_clean)) / prod(dim(genotypes_clean))) * 100, 2), "%\n")
 
 
-### PCA and Outlier Removal
+### PCA
 
-# 1. Impute missing values
-genotypes_imputed <- apply(genotypes_clean, 2, function(x) {
+cat("\n--- LD Pruning for PCA ---\n")
+window_size <- 50
+r2_threshold <- 0.2
+
+maf_clean <- maf[pass_snp]
+keep_for_pca <- rep(TRUE, ncol(genotypes_clean))
+
+for (i in 1:(ncol(genotypes_clean) - 1)) {
+  # Skip this SNP if it was already removed in a previous window
+  if (!keep_for_pca[i]) next
+  
+  # 1. Define the window (the next 50 SNPs)
+  end_idx <- min(i + window_size, ncol(genotypes_clean))
+  neighbors <- (i + 1):end_idx
+  
+  # Only check neighbors that haven't been removed yet
+  active_neighbors <- neighbors[keep_for_pca[neighbors]]
+  if (length(active_neighbors) == 0) next
+  
+  # 2. Calculate r-squared between the central SNP and all active neighbors at the same time
+  r2_vals <- cor(genotypes_clean[, i], genotypes_clean[, active_neighbors], use = "pairwise.complete.obs")^2
+  
+  # 3. Find exactly which neighbors exceed the threshold
+  correlated_snps <- active_neighbors[which(r2_vals > r2_threshold)]
+  
+  # 4. Resolve the correlations by keeping the SNP with the highest MAF
+  if (length(correlated_snps) > 0) {
+    # If our current SNP has a lower MAF than ANY of its correlated neighbors...
+    if (maf_clean[i] < max(maf_clean[correlated_snps], na.rm = TRUE)) {
+      keep_for_pca[i] <- FALSE                 # ...drop our current SNP
+    } else {
+      keep_for_pca[correlated_snps] <- FALSE   # ...otherwise, drop the neighbors
+    }
+  }
+}
+
+cat("Total variants successfully retained for association testing:", ncol(genotypes_clean), "\n")
+cat("SNPs retained for PCA after LD pruning:", sum(keep_for_pca), "\n")
+
+# Filter the dataset specifically for PCA
+genotypes_pca <- genotypes_clean[, keep_for_pca]
+
+# 1. Impute missing values (ONLY on the pruned dataset)
+genotypes_imputed <- apply(genotypes_pca, 2, function(x) {
   x[is.na(x)] <- mean(x, na.rm = TRUE)
   return(x)
 })
 
 # 2. Run PCA
-pca_initial <- prcomp(genotypes_imputed, scale. = TRUE)
-pc_scores_initial <- pca_initial$x
-pca_imp_initial <- summary(pca_initial)$importance
-colors_initial <- ifelse(study_clean$case_control == 1, "salmon", "skyblue")
-
-# 3. Plot PC1 vs PC2
-par(mfrow = c(1, 1))
-plot(pc_scores_initial[, 1], pc_scores_initial[, 2], 
-     col = colors_initial, pch = 20,
-     main = "Initial PC1 vs PC2", 
-     xlab = paste0("PC1 (", round(pca_imp_initial[2,1]*100, 1), "%)"),
-     ylab = paste0("PC2 (", round(pca_imp_initial[2,2]*100, 1), "%)"))
-legend("topright", legend = c("Cases", "Controls"), col = c("salmon", "skyblue"), pch = 20, bty = "n")
-
-# 4. Identify and remove outliers
-outlier_samples <- pc_scores_initial[, 1] < -50
-cat("Number of genetic outliers detected and removed:", sum(outlier_samples), "\n")
-
-genotypes_filtered <- genotypes_imputed[!outlier_samples, ]
-study_filtered <- study_clean[!outlier_samples, ]
-
-# 5. Re-run PCA on the filtered dataset
-pca_res <- prcomp(genotypes_filtered, scale. = TRUE)
+pca_res <- prcomp(genotypes_imputed, scale. = TRUE)
 pc_scores <- pca_res$x
 pca_importance <- summary(pca_res)$importance
-colors_filtered <- ifelse(study_filtered$case_control == 1, "salmon", "skyblue")
+colors <- ifelse(study_clean$case_control == 1, "salmon", "skyblue")
 
-# 6. Plot the clean PCA components (1-10) and the Scree plot
+# 3. Plot the PCA components (1-10) and the Scree plot
 par(mfrow = c(2, 3)) # 2 rows, 3 columns to fit 6 plots
 
 # Scree Plot
-variance_explained <- pca_res$sdev[1:10]^2 / sum(pca_res$sdev^2) * 100
+variance_explained <- pca_res$sdev^2 / sum(pca_res$sdev^2) * 100
 plot(variance_explained, 
      type = "b", pch = 19, col = "steelblue",
-     main = "Scree Plot (Cleaned)", 
+     main = "Scree Plot", 
      xlab = "Principal Component", 
      ylab = "Variance Explained (%)")
 
 # PC1 vs PC2
 plot(pc_scores[, 1], pc_scores[, 2], 
-     col = colors_filtered, pch = 20,
-     main = "Cleaned PCA: PC1 vs PC2", 
+     col = colors, pch = 20,
+     main = "PCA: PC1 vs PC2", 
      xlab = paste0("PC1 (", round(pca_importance[2,1]*100, 1), "%)"),
      ylab = paste0("PC2 (", round(pca_importance[2,2]*100, 1), "%)"))
 legend("topright", legend = c("Cases", "Controls"), col = c("salmon", "skyblue"), pch = 20, bty = "n")
 
 # PC3 vs PC4
 plot(pc_scores[, 3], pc_scores[, 4], 
-     col = colors_filtered, pch = 20,
-     main = "Cleaned PCA: PC3 vs PC4", 
+     col = colors, pch = 20,
+     main = "PCA: PC3 vs PC4", 
      xlab = paste0("PC3 (", round(pca_importance[2,3]*100, 1), "%)"),
      ylab = paste0("PC4 (", round(pca_importance[2,4]*100, 1), "%)"))
 
 # PC5 vs PC6
 plot(pc_scores[, 5], pc_scores[, 6], 
-     col = colors_filtered, pch = 20,
-     main = "Cleaned PCA: PC5 vs PC6", 
+     col = colors, pch = 20,
+     main = "PCA: PC5 vs PC6", 
      xlab = paste0("PC5 (", round(pca_importance[2,5]*100, 1), "%)"),
      ylab = paste0("PC6 (", round(pca_importance[2,6]*100, 1), "%)"))
 
 # PC7 vs PC8
 plot(pc_scores[, 7], pc_scores[, 8], 
-     col = colors_filtered, pch = 20,
-     main = "Cleaned PCA: PC7 vs PC8", 
+     col = colors, pch = 20,
+     main = "PCA: PC7 vs PC8", 
      xlab = paste0("PC7 (", round(pca_importance[2,7]*100, 1), "%)"),
      ylab = paste0("PC8 (", round(pca_importance[2,8]*100, 1), "%)"))
 
 # PC9 vs PC10
 plot(pc_scores[, 9], pc_scores[, 10], 
-     col = colors_filtered, pch = 20,
-     main = "Cleaned PCA: PC9 vs PC10", 
+     col = colors, pch = 20,
+     main = "PCA: PC9 vs PC10", 
      xlab = paste0("PC9 (", round(pca_importance[2,9]*100, 1), "%)"),
      ylab = paste0("PC10 (", round(pca_importance[2,10]*100, 1), "%)"))
 
@@ -366,15 +387,13 @@ par(mfrow = c(1, 1))
 
 # Loop through the top 10 PCs and run a t-test for each
 pc_ttests <- sapply(1:10, function(i) {
-  t.test(pc_scores[, i] ~ study_filtered$case_control)$p.value
+  t.test(pc_scores[, i] ~ study_clean$case_control)$p.value
 })
 
 # Format and print the results
 names(pc_ttests) <- paste0("PC", 1:10)
-cat("T-test p-values comparing PC scores between Cases and Controls:\n")
+cat("\nT-test p-values comparing PC scores between Cases and Controls:\n")
 print(round(pc_ttests, 4))
-
-
 ```
 
 ### Quality Control Results & Filtering Log
@@ -387,8 +406,7 @@ Following these sequential steps, a total of 488 individuals and 21,146 variants
 Individual missingness filtering was bypassed as our diagnostic checks confirmed uniform and extremely low missingness (~1%) across all samples, avoiding unnecessary data loss. For the variants, removing those exceeding the 2% missingness threshold eliminated tech-driven errors, while the 10% MAF threshold filtered out rare alleles that lack statistical power and mathematically destabilize our chosen Chi-squared test. Together, these steps successfully removed low-quality and uninformative data, reducing the overall dataset dimensions (final dimensions: 488 individuals, 21,146 variants) while improving the global missing data percentage from roughly 1.00% down to 0.97%. 
 
 ### PCA Results and Analysis 
-We could see in the first PCA that a small cluster of 6 individuals was separated from the rest of the cohort by a significant margin. We decided to remove these individuals because, even though they were few in comparison to the whole sample, they might be hiding smaller but still significant separations present in the data. 
-We repeated the PCA on the clean dataset and found that no principal component in the first 10 components contains any sign of a particular case/control separation. In all components, cases and controls appear mixed together in a single uniform cluster. 
+We could see in the PCAs there are some small clusters of elements that appear to be separate from the main cluster of elements, that appears to be compact, and cases and controls appear to be evenly spread inside it : in components 1 to 10 , cases and controls appear mixed together in a single uniform cluster. 
 To validate this visual observation, we performed t-tests comparing the scores of the first 10 principal components between cases and controls. None of the components showed even a nominal association with the disease status (all p-values > 0.05, with the lowest being PC4 at p = 0.0576). Since no principal components significantly differ between cases and controls, we concluded that there is no reason to use a regression method that accounts for covariates, as no significant population stratification exists within the main cluster.
 
 
