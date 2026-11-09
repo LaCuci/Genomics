@@ -62,7 +62,6 @@ Verify dimensions, unique identifiers, phenotype coding, genotype values and cor
 # Our Plan for this Homework 
 
 We are given a set of synthetic SNP data from chromosome 10. We are asked to find if any of the SNP variants are associated to the status, so to find if the presence of a modification in one or both alleles in a precise position, or the absence of a modification of the allele in a precise position, can give information on the status of the individual. 
-We are given a set of synthetic SNP data from chromosome 10. We are asked to find if any of the SNP variants are associalted to the status, so to find if the presence of a modification in one or both alleles in a precise position, or the absence of a modification of the allele in a precise position, can give information on the status of the individual. 
 We are going to achieve this by doing an accurate statistical analysis on the variants.
 We are going to prepare the data for our analysis with the industry standard consensus operations that are done to filter out potential flawed data that might hinder the results of our analysis. 
 
@@ -72,11 +71,11 @@ In part 2 we apply other Quality control Techniques to the data : we remove any 
 
 We filter out SNP with high rates of missing data because they will have a lower power than the other SNPs so we could not handle the information they would give in the same way as the information given by other SNPs with complete data. 
 We also check Minor Allele Frequency : we filter out rare variants as they too lack statistical power, and therefore would not yield tangible results.
-We also look at the PCA, to see if there are any covariants that might affect our analysis.
+We also look at the PCA, to see if there are any covariates that might affect our analysis.
 
 We SHOULD also apply Hardy-Weinberg Equilibrium (HWE) on the controls only to look for deviations from expected frequencies, as they often indicate errors.
 
-Part 3 is the heart of the analysis as it contains the statistical tests that give the informations that we then use to decide if any SNP variant in any specific position can give a statistic relevant clue to wether the individual’s status. 
+Part 3 is the heart of the analysis as it contains the statistical tests that give the information that we then use to decide if any SNP variant in any specific position can give a statistic relevant clue regarding the individual’s status. 
 
 We decide to use the Chi squared test because we have categorical variables (case/control, 0/1/2) and because all other hypothesis of the chi square test are fulfilled (....are they? ….) 
 We decide to test the null hypothesis “The status of the individual is independent from the variant of the SNP in the specific position” 
@@ -192,14 +191,14 @@ At a 10% MAF (q=0.1), we retain approximately 97 minor alleles (10% of 968) in t
 
 However, HWE also dictates that the frequency of the homozygous minor genotype (genotype 2) will be q^2 = 0.01. In a sample of 484 people, this yields about 5 individuals. While splitting these 5 individuals between cases and controls still yields expected cell counts slightly below Cochran’s rule of 5 (approx. 3 per cell), this 10% threshold drastically reduces the severity of the sparse-data problem compared to a lower threshold. 
 
-Therefore, our 10% MAF filter secures our overall statistical power, reduces the multiple-testing penalty, and removes the most mathematically unstable SNPs from the primary analysis. Since we know we are discarding many SNPs, we will evaluate those rare variants separately in Part 5 using Monte Carlo simulations.
+Therefore, our 10% MAF filter secures our overall statistical power, reduces the multiple-testing penalty, and removes the most mathematically unstable SNPs from the primary analysis. Since we know we are discarding many SNPs, we will test the excluded variants separately in Part 5, as a robustness check.
 
 ### PCA AND LD Pruning 
 
 We do the Principal Components Analysis. Our goal is to look at the scatter plots of each component to find clusterings of cases separated from the controls, or outliers, or a skewed distribution that separates cases from controls in any principal components. 
 Since we can't look at all principal components, we decided to stop at the component that would cover at least 20% of the variance. 
-We apply the PCA on the results of Linkage Disequilibrium pruning, so on the SNPs that are found to be "Ambassadors" of the "regions of SNPs that are inherited together" , so that the PCA was done on components that don't influence eachother. 
-Finally,we will statistically test the top principal components for associations with disease status.
+We apply the PCA on the results of Linkage Disequilibrium pruning, so on the SNPs that are found to be "Ambassadors" of the "regions of SNPs that are inherited together" , so that the PCA was done on components that don't influence each other. 
+Finally, we will statistically test the top principal components for associations with disease status.
 From the results we will see if we can proceed with our statistical analysis or if we have to use different methods that hold covariates into account. 
 
 ```{r message = FALSE, results='hold', warning=FALSE}
@@ -427,7 +426,7 @@ In this section, we test SNP-phenotype associations by applying a 2-degree-of-fr
 We opted for omitting missing calls entirely to prevent data distortion rather than misinterpreting them as the reference genotype. 
 
 To ensure mathematical validity, we record the exact number of individuals contributing to each test and extract the minimum expected cell count.
-To handle estimation failures, our function verifies data variability, returning NA for monomorphic variants to prevent crashes. While our 10% MAF threshold guarantees at least 98 minor alleles in the SNP, phenotype imbalances explained by the Hardy Weinberg Equilibrium mean that some SNPs will have some cells below 5. We calculate and flag these low expected counts to assess the approximation's reliability, ensuring no warnings are silently discarded.
+To handle estimation failures, our function verifies data variability, returning NA for monomorphic variants to prevent crashes. Crucially, while our 10% MAF threshold removes the rarest variants, phenotype imbalances can still push expected cell counts below 5. We calculate and flag these low expected counts to assess the approximation's reliability, ensuring no warnings are silently discarded.
 
 ### 3B 
 
@@ -441,7 +440,7 @@ Because we are evaluating thousands of variants simultaneously across our genomi
 
 We plot the −log 10(p-values) of all tested variants against their genomic positions, incorporating visual reference lines for both the nominal significance threshold (p=0.05) and the conservative Bonferroni threshold.
 
-Given the massive number of independent tests and our restricted sample size, we anticipate that the stringent Bonferroni threshold will likely not be met by any variant. 
+Given the massive number of independent tests (m≈21,146) and our restricted sample size, we anticipate that the stringent Bonferroni threshold will likely not be met by any variant. 
 
 Therefore, we complement the analysis with a False Discovery Rate (FDR) evaluation using the Benjamini-Hochberg procedure. Because FDR controls the proportion of false discoveries rather than enforcing an absolute zero-tolerance for false positives, it serves as a more statistically powerful tool to check for less strong signals, ensuring that the results are checked thoroughly before making a conclusion.
 
@@ -504,11 +503,15 @@ safe_not_sig <- sum(chisq_results$min_expected >= 5 & chisq_results$p_value > 0.
 
 cat("Safe SNP tests conducted (min. expected count >= 5):", safe_tests, "out of", total_tested, "\n")
 cat("Safe SNP tests with a p-value > 0.05 (not nominally significant):", safe_not_sig, "\n")
+# Comparing the number of SNPs in the clean dataset with the successfully tested variants
+# confirms that the Chi-squared test was successfully applied to every retained column,
+# ensuring no SNPs were skipped or lost during the automated screening process.
 
 
 ### 3B. WORKED EXAMPLE FOR A SINGLE SNP
 
-# We use the SNP with the smallest raw p-value 
+# We use the SNP with the smallest raw p-value (it is also the starting point of
+# the LD analysis), any other column can be singularly evaluated
 example_col <- which.min(chisq_results$p_value)
 example_snp_name <- colnames(genotypes_clean)[example_col]
 example_snp_data <- genotypes_clean[, example_col]
@@ -703,14 +706,14 @@ legend("topright", bty = "n", lty = 2, lwd = 2, col = c("orange", "red"),
 
 ### Example insight 
 
-The association scan identified a promising nominal signal at variant rs2776932 (raw p=8.76×10 ^ −5), indicating a possible trend. 
-However, when evaluated against our Bonferroni threshold (2.36×10 ^ −6 ) which controls the Family-Wise Error Rate across our 21,146 tests, this variant fails to achieve genome-wide significance, resulting in a classification of nominal-only.
-To account for the conservative nature of Bonferroni, we implemented an exploratory False Discovery Rate (FDR) analysis via the Benjamini-Hochberg procedure, but as its very first rank (i=1) uses the exact same baseline entry gate as Bonferroni, even though the FDR threshold relaxes for subsequent ranks, there is not a single variant in our dataset clears this initial baseline entry gate, no variant can clear any other relaxes treshold. 
+The association scan identified a promising nominal signal at variant rs2776932 (raw p=8.76×10^−5), indicating a possible trend. 
+However, when evaluated against our Bonferroni threshold (2.36×10^-6 ) which controls the Family-Wise Error Rate across our 21,146 tests, this variant fails to achieve genome-wide significance, resulting in a classification of nominal-only.
+To account for the conservative nature of Bonferroni, we implemented an exploratory False Discovery Rate (FDR) analysis via the Benjamini-Hochberg procedure, but as its very first rank (i=1) uses the exact same baseline entry gate as Bonferroni, even though the FDR threshold relaxes for subsequent ranks, there is not a single variant in our dataset clears this initial baseline entry gate, no variant can clear any other relaxes threshold. 
 So, the algorithm yields zero significant discoveries (q≤0.05). 
 
 ### Conclusions 
 
-The genome-wide association scan successfully evaluated all retained variants, calculating a strict Bonferroni decision threshold of 2.05e-06 (alpha = 0.05 / 24,350 tests) to control for multiple testing. The resulting Manhattan plot maps the -log10(p-values) against their genomic positions, featuring an orange line for nominal significance (p < 0.05) and a red line for the aggressive Bonferroni threshold; an empirical FDR line was intentionally omitted by the algorithm because no variants achieved an adjusted q-value ≤ 0.05. As visualized in the plot and confirmed by our results table, zero variants passed our chosen multiple-testing criterion. The top-associated SNP (highlighted on the plot) shows only nominal significance, meaning that after correcting for the sheer volume of tests, its signal cannot be statistically distinguished from random chance. Because the Chi-squared test does not yield an effect estimate (like an odds ratio), we provided the raw genotype-by-phenotype counts for the top five variants to illustrate their distributions. Ultimately, we fail to reject the null hypothesis, concluding there is no robust evidence of association on chromosome 10. These results are associative, not causal, and the lack of significant findings is likely explained by the limited statistical power of our restricted sample size, the isolation of a single chromosome, and the inability of a basic Chi-squared test to adjust for underlying clinical covariates or population structure.
+The genome-wide association scan successfully evaluated all retained variants, calculating a strict Bonferroni decision threshold of 2.36e-06 (alpha = 0.05 / 21,146 tests) to control for multiple testing. The resulting Manhattan plot maps the -log10(p-values) against their genomic positions, featuring an orange line for nominal significance (p < 0.05) and a red line for the aggressive Bonferroni threshold; an empirical FDR line was intentionally omitted by the algorithm because no variants achieved an adjusted q-value ≤ 0.05. As visualized in the plot and confirmed by our results table, zero variants passed our chosen multiple-testing criterion. The top-associated SNP (highlighted on the plot) shows only nominal significance, meaning that after correcting for the sheer volume of tests, its signal cannot be statistically distinguished from random chance. Because the Chi-squared test does not yield an effect estimate (like an odds ratio), we provided the raw genotype-by-phenotype counts for the top five variants to illustrate their distributions. Ultimately, we fail to reject the null hypothesis, concluding there is no robust evidence of association on chromosome 10. These results are associative, not causal, and the lack of significant findings is likely explained by the limited statistical power of our restricted sample size, the isolation of a single chromosome, and the inability of a basic Chi-squared test to adjust for underlying clinical covariates or population structure.
 
 # 4. Use LD to interpret a region
 
