@@ -493,6 +493,7 @@ chisq_results <- t(sapply(as.data.frame(genotypes_clean), test_snp_chisq))
 chisq_results <- as.data.frame(chisq_results)
 
 cat("\n Chi-squared Association Test \n")
+cat("Variants tested:", sum(!is.na(chisq_results$p_value)), "\n")
 cat("Variants not testable (p-value NA):", sum(is.na(chisq_results$p_value)), "\n")   
 cat("Degrees of freedom of the tests:\n")                                             
 print(table(chisq_results$df, useNA = "ifany"))                                       
@@ -725,6 +726,16 @@ Present one informative local plot or table relating association evidence, genom
 
 **Questions to answer:** Do nearby associated SNPs necessarily represent independent effects? Does the SNP with the smallest p-value have to be causal? Why is LD pruning for a PCA a different decision from removing correlated variants before association testing?
 
+## Our Execution of part 4
+
+We selected rs2776932 as the lead SNP because it had the smallest raw p-value among the tested variants. Its position is 33,632,412 bp on chromosome 10, and its raw p-value is approximately 8.76 × 10⁻⁵. Although it did not pass the Bonferroni threshold, we investigated its region as required by the assignment.
+
+We defined a window extending 500 kb on each side of the lead SNP, from 33,132,412 to 34,132,412 bp. This window contains 200 variants retained after QC. The window size was chosen to examine the local pattern without calculating an all-by-all LD matrix for the entire chromosome.
+
+We estimated LD using the squared Pearson correlation between genotype counts, coded as 0, 1 or 2 copies of A2. Each regional SNP was compared with the lead SNP. We used controls only to avoid estimating LD from a mixture of groups deliberately sampled according to disease status.
+
+For each pair, we included only controls with known genotypes at both SNPs and recorded the number contributing to the calculation. Pairs with fewer than three observations or zero variance in either genotype vector were assigned an unavailable LD value rather than zero. In this region, all 200 LD calculations were successful, using between 221 and 227 controls per pair.
+
 ```{r message = FALSE, results='hold', warning=FALSE}
 
 # Select an SNP and a region
@@ -904,6 +915,19 @@ This code evaluates the lead SNP—the one with the lowest p-value—designating
 
 We can conclude that nearby associated SNPs do not represent independent effects. In fact, as shown in the plot, the medium/high-ranking dots near the peak are located close to each other in the genome and show local correlation. This shows they aren't independent, they are simply inherited together in the same block of DNA.
 While the lead SNP designates the strongest statistical association in the region, it is rarely guaranteed to be the true causal variant. Because correlation spans across the local LD block, a group of neighboring variants will share similar significance levels, meaning the true causal mutation could be any one of them.
+
+### Interpretation of the regional LD analysis
+
+The plot shows association evidence and LD around the lead SNP, rs2776932. Genomic position is shown on the x-axis, while −log10(p) indicates association strength on the y-axis. Colours represent squared genotype correlations with the lead SNP, estimated in controls. The purple diamond marks the lead SNP, and the dashed red line shows the Bonferroni threshold.
+
+The nearby SNP rs2776934 has very high LD with rs2776932 (r² ≈ 0.987). Several other neighbouring variants show intermediate LD. Therefore, nearby association signals should not automatically be interpreted as independent effects: correlated variants may carry overlapping information. However, this analysis does not establish that all variants belong to one haplotype block or that there is only one underlying effect.
+
+No variant in the region passes the Bonferroni threshold. Additionally, 49 regional variants have association tests flagged for expected counts below five, so their asymptotic p-values require caution.
+
+The SNP with the smallest p-value is not necessarily causal. It may be correlated with another variant through LD, or the observed signal may reflect sampling variation. A causal variant, if present, could also be absent from the dataset.
+
+LD pruning for PCA reduces the disproportionate influence of correlated SNPs on the principal components. Association testing has a different purpose: it evaluates individual variants. SNPs removed from the PCA subset can therefore remain in the association analysis, where their correlations help interpret neighbouring signals.
+
 
 
 # 5. Assess robustness
