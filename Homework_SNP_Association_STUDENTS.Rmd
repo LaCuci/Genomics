@@ -499,6 +499,7 @@ cat("Degrees of freedom of the tests:\n")
 print(table(chisq_results$df, useNA = "ifany"))                                       
 cat("Variants with an expected count < 5 (approximation less reliable):",             
     sum(chisq_results$min_expected < 5, na.rm = TRUE), "\n")
+total_tested <- sum(!is.na(chisq_results$p_value))
 safe_tests <- sum(chisq_results$min_expected >= 5, na.rm = TRUE)
 safe_not_sig <- sum(chisq_results$min_expected >= 5 & chisq_results$p_value > 0.05, na.rm = TRUE)
 
@@ -909,13 +910,6 @@ legend(
 
 ```
 
-# Comments
-
-This code evaluates the lead SNP—the one with the lowest p-value—designating it as the reference. Then, a 1 Mb window centered on the lead SNP is defined, and the LD is computed by calculating the squared correlation (r^2) between the lead SNP and every other SNP in the selected cohort. This value explains how strongly the variants are correlated.Finally, an informative regional plot is displayed. It shows the physical position on the chromosome on the x-axis, while the association strength on the y-axis uses the -log_10(p) scale. Four categories of colors are used for the LD: red for strong correlation, orange for moderate correlation, dark grey for low correlation, and light grey when LD is unavailable. The lead SNP is marked with a purple diamond. The Bonferroni threshold distinguishes significant elements from non-significant ones.
-
-We can conclude that nearby associated SNPs do not represent independent effects. In fact, as shown in the plot, the medium/high-ranking dots near the peak are located close to each other in the genome and show local correlation. This shows they aren't independent, they are simply inherited together in the same block of DNA.
-While the lead SNP designates the strongest statistical association in the region, it is rarely guaranteed to be the true causal variant. Because correlation spans across the local LD block, a group of neighboring variants will share similar significance levels, meaning the true causal mutation could be any one of them.
-
 ### Interpretation of the regional LD analysis
 
 The plot shows association evidence and LD around the lead SNP, rs2776932. Genomic position is shown on the x-axis, while −log10(p) indicates association strength on the y-axis. Colours represent squared genotype correlations with the lead SNP, estimated in controls. The purple diamond marks the lead SNP, and the dashed red line shows the Bonferroni threshold.
@@ -940,8 +934,8 @@ Choose one scientifically motivated sensitivity analysis, such as changing a QC 
 # Explanation of our robustness assessment
 
 For our sensitivity analysis, we decided to investigate whether our strict 10% Minor Allele Frequency (MAF) threshold prematurely discarded variants that were actually associated with the disease. 
-To assess this, we bypassed the MAF filter, effectively evaluating all variants that passed the initial missingness QC.
-Testing rare variants is tricky because low allele counts create sparse contingency tables, which can invalidate standard Chi-squared tests and yield unreliable p-values. To handle this, we used a two-step approach: we first screened all rare variants with a standard test while tracking minimum expected cell counts, and then re-tested any nominally significant variants (p < 0.05) using Monte Carlo simulations (with 2,000 permutations) to get reliable empirical p-values. Lastly, we adjusted our Bonferroni threshold to account for the total number of tested variants (m_total), making sure we evaluated any potential rare variant signals under appropriately strict significance criteria.
+To assess this, we bypassed the MAF filter, testing also the 6,552 variants that passed the initial missingness QC but were excluded by the MAF filter. The primary analysis remains the one of part 3 (MAF ≥ 10%, 21,146 tests); the sensitivity analysis tests the excluded variants separately and does not replace it.
+Testing rare variants is tricky because low allele counts create sparse contingency tables, which can make the standard Chi-squared test unreliable. To handle this, we used a two-step approach: we first screened all rare variants with a standard test while tracking minimum expected cell counts, and then re-tested any nominally significant variants (p < 0.05) using Monte Carlo simulations (with 2,000 permutations) as a reliability check of their p-values. Lastly, we adjusted our Bonferroni threshold to account for the total number of tested variants: m goes from 21,146 (primary analysis) to m_total = 27,698 (all variants passing the missingness filter).
 
 ```{r message = FALSE, results='hold', warning=FALSE}
 # ==========================================
@@ -958,12 +952,11 @@ cat("Testing", ncol(genotypes_rare), "rare variants excluded in the primary anal
 # The function returns the p-value and the smallest expected count,
 # so that we can say how many tests are unreliable (sparse tables)
 # What is the meaning of the retrieved p-values?
-# Normally, tiny p-value suggests that the distribution of that variant (0, 1, 2) is
+# Normally, a tiny p-value suggests that the distribution of that variant (0, 1, 2) is
 # drastically different between cases and controls while a high p-value suggests
 # no evidence of an association.
-# By choosing to not apply a MAF threshold and considering rare variants, as done in this part,
-# a small p-values suggest a sort of artifact because low allele counts create 
-#   sparse contingency tables that invalidate standard asymptotic tests.
+# For the variants excluded by the MAF filter the tables are often sparse (low allele counts),
+# so the asymptotic p-values are less reliable and a small p-value must be interpreted with caution.
 test_rare_asympt <- function(snp_vector) {
   valid_idx <- !is.na(snp_vector) & !is.na(phenotype)
   s <- snp_vector[valid_idx]
@@ -1037,7 +1030,14 @@ if (length(nominally_sig_rare) > 0) {
 ```
 
 # Conclusion about our Sensitivity Analysis
-Our sensitivity analysis proves that our 10% MAF filter was the right call. When we went back and tested all the rare variants we initially dropped, none of them came close to passing our strict Bonferroni significance cutoff. The few rare variants that initially looked slightly interesting (p < 0.05) turned out to be false alarms caused by low sample counts in sparse tables, which our Monte Carlo simulations quickly cleared up.
+No variant passes the Bonferroni threshold, neither among the 6,483 testable excluded variants (69 variants have no variation and cannot be tested) nor in the primary analysis. 
+So our conclusion, no robust evidence of association on chromosome 10, does not depend on the MAF threshold. Also, the number of excluded variants with p < 0.05 (200) is below the number expected by chance (about 324), so we see no excess of signals among them.
+
+The Bonferroni threshold becomes stricter (1.81×10^-6 instead of 2.36×10^-6) because there are 6,552 more variants (27,698 tests instead of 21,146). The reliability of the tests also changes: 4,598 of the tests on the excluded variants (about 71%) have a minimum expected count below 5, so their asymptotic p-values are less reliable than those of the primary analysis. The Monte Carlo check on the variants with p < 0.05 cannot go below 1/2001 (about 5×10^-4) with 2,000 simulations, so it can only check their reliability and cannot show Bonferroni significance.
+
+Both changes come from the choice of the threshold: including variants with low MAF increases the number of tests (stricter threshold) and produces sparse tables (less reliable p-values).
+
+This analysis supports the MAF filter as a reasonable choice, but it does not prove it: with so few minor alleles, a true association of a low-frequency variant could hardly be detected with this sample size anyway.
 
 
 
