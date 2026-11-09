@@ -61,6 +61,7 @@ Verify dimensions, unique identifiers, phenotype coding, genotype values and cor
 
 # Our Plan for this Homework 
 
+We are given a set of synthetic SNP data from chromosome 10. We are asked to find if any of the SNP variants are associated to the status, so to find if the presence of a modification in one or both alleles in a precise position, or the absence of a modification of the allele in a precise position, can give information on the status of the individual. 
 We are given a set of synthetic SNP data from chromosome 10. We are asked to find if any of the SNP variants are associalted to the status, so to find if the presence of a modification in one or both alleles in a precise position, or the absence of a modification of the allele in a precise position, can give information on the status of the individual. 
 We are going to achieve this by doing an accurate statistical analysis on the variants.
 We are going to prepare the data for our analysis with the industry standard consensus operations that are done to filter out potential flawed data that might hinder the results of our analysis. 
