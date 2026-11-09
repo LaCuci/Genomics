@@ -961,11 +961,11 @@ genotype.</p>
 individuals contributing to each test and extract the minimum expected
 cell count. To handle estimation failures, our function verifies data
 variability, returning NA for monomorphic variants to prevent crashes.
-Crucially, while our 5% MAF threshold guarantees at least 24 minor
-genotypes, phenotype imbalances can still push expected cell counts
-below 20. We calculate and flag these low expected counts to assess the
-approximation’s reliability, ensuring no warnings are silently
-discarded.</p>
+While our 10% MAF threshold guarantees at least 98 minor alleles in the
+SNP, phenotype imbalances explained by the Hardy Weinberg Equilibrium
+mean that some SNPs will have some cells below 5. We calculate and flag
+these low expected counts to assess the approximation’s reliability,
+ensuring no warnings are silently discarded.</p>
 </div>
 <div id="b" class="section level3">
 <h3>3B</h3>
@@ -997,9 +997,9 @@ p-value.</p>
 genomic positions, incorporating visual reference lines for both the
 nominal significance threshold (p=0.05) and the conservative Bonferroni
 threshold.</p>
-<p>Given the massive number of independent tests (m≈24,350) and our
-restricted sample size, we anticipate that the stringent Bonferroni
-threshold will likely not be met by any variant.</p>
+<p>Given the massive number of independent tests and our restricted
+sample size, we anticipate that the stringent Bonferroni threshold will
+likely not be met by any variant.</p>
 <p>Therefore, we complement the analysis with a False Discovery Rate
 (FDR) evaluation using the Benjamini-Hochberg procedure. Because FDR
 controls the proportion of false discoveries rather than enforcing an
@@ -1069,21 +1069,24 @@ chisq_results &lt;- t(sapply(as.data.frame(genotypes_clean), test_snp_chisq))
 chisq_results &lt;- as.data.frame(chisq_results)
 
 cat(&quot;\n Chi-squared Association Test \n&quot;)
-cat(&quot;Variants tested:&quot;, sum(!is.na(chisq_results$p_value)), &quot;\n&quot;)
+total_tested &lt;- sum(!is.na(chisq_results$p_value))
+cat(&quot;Variants tested:&quot;, total_tested, &quot;\n&quot;)
 cat(&quot;Variants not testable (p-value NA):&quot;, sum(is.na(chisq_results$p_value)), &quot;\n&quot;)   
 cat(&quot;Degrees of freedom of the tests:\n&quot;)                                             
 print(table(chisq_results$df, useNA = &quot;ifany&quot;))                                       
-cat(&quot;Variants with an expected count &lt; 20 (approximation less reliable):&quot;,             
-    sum(chisq_results$min_expected &lt; 20, na.rm = TRUE), &quot;\n&quot;)
-# Comparing the number of SNPs in the clean dataset with the successfully tested variants
-# confirms that the Chi-squared test was successfully applied to every retained column,
-# ensuring no SNPs were skipped or lost during the automated screening process.
+cat(&quot;Variants with an expected count &lt; 5 (approximation less reliable):&quot;,             
+    sum(chisq_results$min_expected &lt; 5, na.rm = TRUE), &quot;\n&quot;)
+safe_tests &lt;- sum(chisq_results$min_expected &gt;= 5, na.rm = TRUE)
+safe_not_sig &lt;- sum(chisq_results$min_expected &gt;= 5 &amp; chisq_results$p_value &gt; 0.05, na.rm = TRUE)
+
+cat(&quot;Safe SNP tests conducted (min. expected count &gt;= 5):&quot;, safe_tests, &quot;out of&quot;, total_tested, &quot;\n&quot;)
+cat(&quot;Safe SNP tests with a p-value &gt; 0.05 (not nominally significant):&quot;, safe_not_sig, &quot;\n&quot;)
+cat(&quot;Safe SNP tests with a p-value &lt;= 0.05 (Nominally significant):&quot;, safe_tests-safe_not_sig, &quot;\n&quot;)
 
 
 ### 3B. WORKED EXAMPLE FOR A SINGLE SNP
 
-# We use the SNP with the smallest raw p-value (it is also the starting point of
-# the LD analysis), any other column can be singularly evaluated
+# We use the SNP with the smallest raw p-value 
 example_col &lt;- which.min(chisq_results$p_value)
 example_snp_name &lt;- colnames(genotypes_clean)[example_col]
 example_snp_data &lt;- genotypes_clean[, example_col]
@@ -1283,7 +1286,10 @@ legend(&quot;topright&quot;, bty = &quot;n&quot;, lty = 2, lwd = 2, col = c(&quo
 ## 
 ##     1     2 
 ##     3 21143 
-## Variants with an expected count &lt; 20 (approximation less reliable): 11364 
+## Variants with an expected count &lt; 5 (approximation less reliable): 2901 
+## Safe SNP tests conducted (min. expected count &gt;= 5): 18245 out of 21146 
+## Safe SNP tests with a p-value &gt; 0.05 (not nominally significant): 17368 
+## Safe SNP tests with a p-value &lt;= 0.05 (Nominally significant): 877 
 ## 
 ##  Worked Example for SNP rs2776932 
 ## [1] &quot;Contingency Table (Rows = Controls 0, Cases 1 | Columns = Genotypes 0, 1, 2):&quot;
@@ -1360,8 +1366,8 @@ legend(&quot;topright&quot;, bty = &quot;n&quot;, lty = 2, lwd = 2, col = c(&quo
 <h3>Example insight</h3>
 <p>The association scan identified a promising nominal signal at variant
 rs2776932 (raw p=8.76×10 ^ −5), indicating a possible trend. However,
-when evaluated against our Bonferroni threshold (2.05×10 ^ −6 ) which
-controls the Family-Wise Error Rate across our 24,350 tests, this
+when evaluated against our Bonferroni threshold (2.36×10 ^ −6 ) which
+controls the Family-Wise Error Rate across our 21,146 tests, this
 variant fails to achieve genome-wide significance, resulting in a
 classification of nominal-only. To account for the conservative nature
 of Bonferroni, we implemented an exploratory False Discovery Rate (FDR)

@@ -426,7 +426,7 @@ In this section, we test SNP-phenotype associations by applying a 2-degree-of-fr
 We opted for omitting missing calls entirely to prevent data distortion rather than misinterpreting them as the reference genotype. 
 
 To ensure mathematical validity, we record the exact number of individuals contributing to each test and extract the minimum expected cell count.
-To handle estimation failures, our function verifies data variability, returning NA for monomorphic variants to prevent crashes. Crucially, while our 5% MAF threshold guarantees at least 24 minor genotypes, phenotype imbalances can still push expected cell counts below 20. We calculate and flag these low expected counts to assess the approximation's reliability, ensuring no warnings are silently discarded.
+To handle estimation failures, our function verifies data variability, returning NA for monomorphic variants to prevent crashes. While our 10% MAF threshold guarantees at least 98 minor alleles in the SNP, phenotype imbalances explained by the Hardy Weinberg Equilibrium mean that some SNPs will have some cells below 5. We calculate and flag these low expected counts to assess the approximation's reliability, ensuring no warnings are silently discarded.
 
 ### 3B 
 
@@ -440,7 +440,7 @@ Because we are evaluating thousands of variants simultaneously across our genomi
 
 We plot the −log 10(p-values) of all tested variants against their genomic positions, incorporating visual reference lines for both the nominal significance threshold (p=0.05) and the conservative Bonferroni threshold.
 
-Given the massive number of independent tests (m≈24,350) and our restricted sample size, we anticipate that the stringent Bonferroni threshold will likely not be met by any variant. 
+Given the massive number of independent tests and our restricted sample size, we anticipate that the stringent Bonferroni threshold will likely not be met by any variant. 
 
 Therefore, we complement the analysis with a False Discovery Rate (FDR) evaluation using the Benjamini-Hochberg procedure. Because FDR controls the proportion of false discoveries rather than enforcing an absolute zero-tolerance for false positives, it serves as a more statistically powerful tool to check for less strong signals, ensuring that the results are checked thoroughly before making a conclusion.
 
@@ -493,21 +493,24 @@ chisq_results <- t(sapply(as.data.frame(genotypes_clean), test_snp_chisq))
 chisq_results <- as.data.frame(chisq_results)
 
 cat("\n Chi-squared Association Test \n")
-cat("Variants tested:", sum(!is.na(chisq_results$p_value)), "\n")
+total_tested <- sum(!is.na(chisq_results$p_value))
+cat("Variants tested:", total_tested, "\n")
 cat("Variants not testable (p-value NA):", sum(is.na(chisq_results$p_value)), "\n")   
 cat("Degrees of freedom of the tests:\n")                                             
 print(table(chisq_results$df, useNA = "ifany"))                                       
-cat("Variants with an expected count < 20 (approximation less reliable):",             
-    sum(chisq_results$min_expected < 20, na.rm = TRUE), "\n")
-# Comparing the number of SNPs in the clean dataset with the successfully tested variants
-# confirms that the Chi-squared test was successfully applied to every retained column,
-# ensuring no SNPs were skipped or lost during the automated screening process.
+cat("Variants with an expected count < 5 (approximation less reliable):",             
+    sum(chisq_results$min_expected < 5, na.rm = TRUE), "\n")
+safe_tests <- sum(chisq_results$min_expected >= 5, na.rm = TRUE)
+safe_not_sig <- sum(chisq_results$min_expected >= 5 & chisq_results$p_value > 0.05, na.rm = TRUE)
+
+cat("Safe SNP tests conducted (min. expected count >= 5):", safe_tests, "out of", total_tested, "\n")
+cat("Safe SNP tests with a p-value > 0.05 (not nominally significant):", safe_not_sig, "\n")
+cat("Safe SNP tests with a p-value <= 0.05 (Nominally significant):", safe_tests-safe_not_sig, "\n")
 
 
 ### 3B. WORKED EXAMPLE FOR A SINGLE SNP
 
-# We use the SNP with the smallest raw p-value (it is also the starting point of
-# the LD analysis), any other column can be singularly evaluated
+# We use the SNP with the smallest raw p-value 
 example_col <- which.min(chisq_results$p_value)
 example_snp_name <- colnames(genotypes_clean)[example_col]
 example_snp_data <- genotypes_clean[, example_col]
@@ -703,7 +706,7 @@ legend("topright", bty = "n", lty = 2, lwd = 2, col = c("orange", "red"),
 ### Example insight 
 
 The association scan identified a promising nominal signal at variant rs2776932 (raw p=8.76×10 ^ −5), indicating a possible trend. 
-However, when evaluated against our Bonferroni threshold (2.05×10 ^ −6 ) which controls the Family-Wise Error Rate across our 24,350 tests, this variant fails to achieve genome-wide significance, resulting in a classification of nominal-only.
+However, when evaluated against our Bonferroni threshold (2.36×10 ^ −6 ) which controls the Family-Wise Error Rate across our 21,146 tests, this variant fails to achieve genome-wide significance, resulting in a classification of nominal-only.
 To account for the conservative nature of Bonferroni, we implemented an exploratory False Discovery Rate (FDR) analysis via the Benjamini-Hochberg procedure, but as its very first rank (i=1) uses the exact same baseline entry gate as Bonferroni, even though the FDR threshold relaxes for subsequent ranks, there is not a single variant in our dataset clears this initial baseline entry gate, no variant can clear any other relaxes treshold. 
 So, the algorithm yields zero significant discoveries (q≤0.05). 
 
