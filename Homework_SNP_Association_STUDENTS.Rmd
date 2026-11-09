@@ -1022,10 +1022,10 @@ if (length(nominally_sig_rare) > 0) {
   }
   cat("Smallest Monte Carlo p-value among rare variants:", signif(min(mc_p_vals), 3), "\n")
 }
-# The smallest resulting empirical p-value was 5e-04 (the lower bound for 2,000 permutations). 
-# Since this value remains well above the strict Bonferroni threshold, we confirm that 
-# these rare variants do not reach true significance, validating our 10% MAF filter.
-
+# The smallest Monte Carlo p-value is 5e-04, the lowest value possible with 2,000 simulations.
+# This is above the Bonferroni threshold, so the simulation only checks the reliability
+# of the nominal p-values; it cannot show significance.
+# No rare variant passes the threshold, so we found no signal that the MAF filter hid.
 
 ```
 
