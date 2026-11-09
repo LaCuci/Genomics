@@ -494,8 +494,6 @@ chisq_results <- t(sapply(as.data.frame(genotypes_clean), test_snp_chisq))
 chisq_results <- as.data.frame(chisq_results)
 
 cat("\n Chi-squared Association Test \n")
-total_tested <- sum(!is.na(chisq_results$p_value))
-cat("Variants tested:", total_tested, "\n")
 cat("Variants not testable (p-value NA):", sum(is.na(chisq_results$p_value)), "\n")   
 cat("Degrees of freedom of the tests:\n")                                             
 print(table(chisq_results$df, useNA = "ifany"))                                       
@@ -506,7 +504,6 @@ safe_not_sig <- sum(chisq_results$min_expected >= 5 & chisq_results$p_value > 0.
 
 cat("Safe SNP tests conducted (min. expected count >= 5):", safe_tests, "out of", total_tested, "\n")
 cat("Safe SNP tests with a p-value > 0.05 (not nominally significant):", safe_not_sig, "\n")
-cat("Safe SNP tests with a p-value <= 0.05 (Nominally significant):", safe_tests-safe_not_sig, "\n")
 
 
 ### 3B. WORKED EXAMPLE FOR A SINGLE SNP
