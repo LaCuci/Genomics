@@ -65,24 +65,34 @@ We are given a set of synthetic SNP data from chromosome 10. We are asked to fin
 We are going to achieve this by doing an accurate statistical analysis on the variants.
 We are going to prepare the data for our analysis with the industry standard consensus operations that are done to filter out potential flawed data that might hinder the results of our analysis. 
 
-In part 1 we preprocess the data by searching if there are wrong elements in our data like a duplicated column/row or values that are not conform to the ones we are prepared to operate on. 
+In part 1 we preprocess the data by searching if there are wrong elements in our data like a duplicated column/row or values that don't conform to the ones we are prepared to operate on. 
 
 In part 2 we apply other Quality control Techniques to the data : we remove any individual whose relative frequency on the variants of the Null (N/A) information  is over 2%, because we don’t want to take into account individuals where we don’t have enough information, as the whole sample might be inaccurate or biased. 
 
 We filter out SNP with high rates of missing data because they will have a lower power than the other SNPs so we could not handle the information they would give in the same way as the information given by other SNPs with complete data. 
 We also check Minor Allele Frequency : we filter out rare variants as they too lack statistical power, and therefore would not yield tangible results.
-We also look at the PCA, to see if there are any covariates that might affect our analysis.
+We analyze the SNPs with PCA, to see if there are any covariates that might affect our analysis.
 
-We SHOULD also apply Hardy-Weinberg Equilibrium (HWE) on the controls only to look for deviations from expected frequencies, as they often indicate errors.
+We are aware that there could be some covariates affecting the analysis, like common ancestry between individuals in the study. If the PCA finds that there are covariates, then we will use logistic regression. Else, we will use the Chi-Square test.
 
-Part 3 is the heart of the analysis as it contains the statistical tests that give the information that we then use to decide if any SNP variant in any specific position can give a statistic relevant clue regarding the individual’s status. 
+Part 3 contains the statistical tests that give the information that we then use to decide if any SNP variant in any specific position can give a statistic relevant clue regarding the individual’s status. 
 
-We decide to use the Chi squared test because we have categorical variables (case/control, 0/1/2) and because all other hypothesis of the chi square test are fulfilled (....are they? ….) 
-We decide to test the null hypothesis “The status of the individual is independent from the variant of the SNP in the specific position” 
+The Chi squared test analyzes categorical variables, which are the ones we deal with (case/control, 0/1/2) and answers a question which is the same as our question : is there a significant association between 2 categorical variables.
 
-Since we are doing multiple testing as there are many positions and variants to test, we decide to correct the results of the Chi square test for the multiple hypothesis testing to limit the type 1 error (false positives) that would otherwise grow to be huge. We decide use the easiest method to do this : the Bonferroni correction. 
+We decide to test the null hypothesis “The "status of the individual" is independent from the "SNP variant" in a specific position” 
 
-We are aware that there could be some covariates affecting the analysis, like common ancestry between individuals in the study,  so we SHOULD do a Principal Component Analysis to check wether  this is the case or not. 
+The logistic regression test allows us to incorporate the information given by covariates, so that it would not mask the results if only the SNP variant was used as information. We can use it because we have one binary categorical variable (the status), but we don't know if there is a linear relationship within the eventual covariates and our variable (SNP variant).
+
+Since we are doing multiple testing as there are many positions and variants to test, we decide to correct the results for the multiple hypothesis testing to limit the type 1 error (false positives) that would otherwise grow to be huge. 
+We decide use the easiest method to do this : the Bonferroni correction. 
+Since we expect to have a very high Bonferroni treshold because we have thousands of tests to make, we complement the analysis with a False Discovery Rate (FDR) evaluation using the Benjamini-Hochberg procedure, which is less strict than the Bonferroni correction because it lowers the treshold as it scans the p-values in decreasing order.
+
+In Part 4 we check the linkage disequilibrium. We use it to analyze the most significant SNPs we get from the statistical analysis. We want to find how many of them are independent and which ones are correlated (so they give the same information on the status of the sample). 
+We do this analysis for association testing. 
+We check for association by looking at a window around each significant SNP, to search if other significant SNPs correlated to the one we are checking are in that window. 
+ The window shouldn't be too large because two correlated SNPs must be close to eachother. 
+ 
+ In Part 5 we are checking the impact of our decisions earlier in the analysis. We don't know now which one of our decision will eliminate from the dataset the largest amount of data, but we will analyze how the SNPs dropped would have affected the analysis if they were kept in the analysis. 
 
 
 
@@ -1045,6 +1055,20 @@ This analysis supports the MAF filter as a reasonable choice, but it does not pr
 
 Answer the research question in a short conclusion. Separate association evidence and causal claims. Discuss limited sample size, single-chromosome coverage, simulation design and the absence of additional covariates.
 Add a contribution statement and a brief disclosure of AI assistance, if used, including one concrete example of how you verified an AI-generated suggestion.
+
+## Conclusions 
+
+We found that no SNP is statistically relevant to the status of the individual. 
+We think that this is due to the fact that we only have 494 individuals, and only one chromosome. This caused our statistical tables to have cells with too few values, that hindered the effect of our statistical analysis.
+
+We made the plan and the analysis, but we used AI as a help to write the code. 
+
+A concrete example : 
+We asked for the method to calculate the chi-square test. It returned this line : 
+chisq_res <- suppressWarnings(chisq.test(tbl, correct = FALSE))
+
+this is the documentation : https://stat.ethz.ch/R-manual/R-devel/library/stats/html/chisq.test.html
+
 
 Submit:
 
